@@ -27,7 +27,7 @@ class ModelProfiles:
         return [self.get(r["id"], owner) for r in self.db.all("SELECT id FROM model_profiles WHERE owner=? ORDER BY created", (owner,))]
 
     def save(self, owner, payload, profile_id=None):
-        if not isinstance(payload, dict) or set(payload) - {"name", "provider", "model", "base_url", "api_key", "clear_api_key", "max_output_tokens", "max_input_chars", "disable_thinking"}:
+        if not isinstance(payload, dict) or set(payload) - {"name", "provider", "model", "base_url", "api_key", "clear_api_key", "max_output_tokens", "max_input_chars", "disable_thinking", "max_planning_turns"}:
             raise Rejected("Unknown model profile fields")
         name = payload.get("name")
         if not isinstance(name, str) or not 1 <= len(name.strip()) <= 100:

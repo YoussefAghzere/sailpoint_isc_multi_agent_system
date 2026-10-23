@@ -133,6 +133,8 @@ class Orchestrator:
         self.model, self.research, self.catalog, self.isc = model, research, catalog, isc
         self.env, self.registry, self.external = environment, registry, external
         self.budget, self.trace = Budget(), []
+        self.max_turns = getattr(model, "config", {}).get("max_planning_turns", 16)
+        self.max_calls = self.max_turns + 12  # shared allowance for bounded specialists
         self.evidence = []
         self.heartbeat = heartbeat or (lambda event: None)
 
@@ -150,37 +152,59 @@ class Orchestrator:
 
     def _agent(self, role, context, depth):
         history = []
-        max_local_calls = 8 if depth == 0 else 3
-        for _ in range(max_local_calls):
-            if self.budget.calls >= 12:
+        max_local_calls = self.max_turns if depth == 0 else 3
+        seen = {}
+        for turn in range(max_local_calls):
+            if self.budget.calls >= self.max_calls:
                 raise Rejected("Shared model-call budget exhausted; narrow the task")
             self.budget.calls += 1
             self.heartbeat({"role": role, "calls": self.budget.calls})
-            model_input = {"context": context, "history": history[-4:]}
+            model_input = {"context": context, "history": history[:],
+                           "planning_budget": {"turns_remaining": max_local_calls - turn,
+                               "instruction": "Use existing results. On your last turn, finish or ask focused questions; do not call another tool."}}
             limit = getattr(self.model, "max_input_chars", 100000)
             while model_input["history"] and len(canonical(model_input)) > limit:
                 model_input["history"] = model_input["history"][1:]
             characters = len(canonical(model_input))
             self.budget.input_characters += characters
-            if characters > min(limit, 100000) or self.budget.input_characters > 600000:
+            if characters > min(limit, 100000) or self.budget.input_characters > self.max_calls * min(limit, 100000):
                 raise Rejected("Shared model input budget exhausted; narrow the task")
             action = self.model.generate(role, model_input)
             try:
                 args = json.loads(action["arguments"])
             except ValueError:
                 raise Rejected("Agent arguments are not valid JSON") from None
+            if not isinstance(args, dict):
+                raise Rejected("Agent arguments must be a JSON object")
             event = {"role": role, "action": action["action"], "summary": action["summary"][:400]}
             self.trace.append(event)
             self.heartbeat(event)
             if action["action"] in {"finish", "ask"}:
                 return args if action["action"] == "finish" else {"questions": args.get("questions", [])}
-            if self.budget.tools >= 12:
+            if turn == max_local_calls - 1:
+                if depth:
+                    return {"answer": "Specialist turn limit reached; use findings or ask the owner", "findings": history}
+                event["status"] = "turn_limit_reached"
+                self.heartbeat(event)
+                raise Rejected("Planning turn limit reached; model did not finish or ask. Review activity, narrow the request, or increase Planning turns in Models & appearance")
+            fingerprint = digest([action["action"], args])
+            seen[fingerprint] = seen.get(fingerprint, 0) + 1
+            if seen[fingerprint] >= 3:
+                event["status"] = "repeated_action_blocked"
+                self.heartbeat(event)
+                raise Rejected("Planning stopped: the model repeated the same tool request three times. Review activity and refine the prompt; increasing token budgets will not fix this loop")
+            if self.budget.tools >= self.max_calls:
                 raise Rejected("Shared tool budget exhausted")
             self.budget.tools += 1
             try:
                 output = self._tool(action["action"], args, role, depth)
-            except Rejected as exc:
-                output = {"error": str(exc)}
+            except (Rejected, KeyError, TypeError, ValueError) as exc:
+                output = {"error": str(exc) if isinstance(exc, Rejected) else "Invalid tool arguments; use the documented argument form"}
+                event["status"] = "tool_rejected"
+            else:
+                event["status"] = "tool_completed"
+            # Persist status only: tool arguments/results may contain tenant data.
+            self.heartbeat(event)
             # Bound result size. The agent can fetch narrower operations/pages if needed.
             history.append({"action": event, "result": canonical(output)[:16000]})
         if depth:

@@ -78,7 +78,7 @@ on('export-audit','click',()=>download('audit-'+requireEnv().id+'.json',pretty(s
 async function refresh(){
   if(!state.me)return;
   const [envs,specs,jobs,models]=await Promise.all([api('/environments'),api('/specs'),api('/jobs'),api('/model-profiles')]);state.envs=envs;state.specs=specs;state.jobs=jobs;state.modelData=models;renderModels();const wasEmpty=!state.eid;renderEnvironments();if(wasEmpty&&state.eid)setStructuredDefault();
-  $('jobs').innerHTML=table(['JOB','STATE','UPDATED','RESULT / PROGRESS'],jobs.slice(0,12).map(j=>[esc(j.kind),badge(j.state),esc(stamp(j.updated)),esc(j.error||pretty(j.result||{}))]));
+  $('jobs').innerHTML=table(['JOB','STATE','UPDATED','RESULT / PROGRESS'],jobs.slice(0,12).map(j=>[esc(j.kind),badge(j.state),esc(stamp(j.updated)),esc(j.error||pretty(j.result?.progress||j.result||{}))+(j.result?.activity?.length?`<details><summary>Agent activity (${j.result.activity.length})</summary><pre>${esc(pretty(j.result.activity))}</pre></details>`:'')]));
   $('specs').innerHTML=table(['VERSION','CONTENT HASH','IMPORTED','ORIGIN'],specs.map(s=>[esc(s.version),esc(s.hash.slice(0,16)),esc(stamp(s.fetched)),`<a href="${esc(s.origin)}" target="_blank" rel="noopener noreferrer">Official specification ↗</a>`]));
   if(!state.eid){$('runs').innerHTML='<p class="empty">Create an environment to begin.</p>';return;}
   const eid=state.eid;
@@ -121,7 +121,7 @@ function modelProviderFields(clear=false){
   if(clear){$('model-api-key').value='';$('model-id').value=isLocal?'qwen':'';$('model-max-output').value=isLocal?'4096':'6000';$('model-max-input').value=isLocal?'48000':'100000';modelStatus('');}
 }
 function editModel(id=''){
-  const p=state.modelData.profiles.find(x=>x.id===id);state.editingModel=p?.id||'';$('model-form-title').textContent=p?'Edit model profile':'Connect a model';$('model-name').value=p?.name||'Local Qwen';$('model-provider').value=p?.provider||'local';$('model-id').value=p?.model||'qwen';$('model-base-url').value=p?.base_url||'http://127.0.0.1:8080/v1';$('model-api-key').value='';$('model-clear-key').checked=false;$('model-max-output').value=p?.max_output_tokens||(p?.provider&&p.provider!=='local'?6000:4096);$('model-max-input').value=p?.max_input_chars||48000;$('model-disable-thinking').checked=p?.disable_thinking??true;$('test-model-button').disabled=!p;modelProviderFields();modelStatus('');
+  const p=state.modelData.profiles.find(x=>x.id===id);state.editingModel=p?.id||'';$('model-form-title').textContent=p?'Edit model profile':'Connect a model';$('model-name').value=p?.name||'Local Qwen';$('model-provider').value=p?.provider||'local';$('model-id').value=p?.model||'qwen';$('model-base-url').value=p?.base_url||'http://127.0.0.1:8080/v1';$('model-api-key').value='';$('model-clear-key').checked=false;$('model-max-output').value=p?.max_output_tokens||(p?.provider&&p.provider!=='local'?6000:4096);$('model-max-input').value=p?.max_input_chars||48000;$('model-max-turns').value=p?.max_planning_turns||16;$('model-disable-thinking').checked=p?.disable_thinking??true;$('test-model-button').disabled=!p;modelProviderFields();modelStatus('');
 }
 async function useModel(id){await api('/model-selection','POST',{profile_id:id});await refresh();toast('Planning model selected. Existing queued jobs keep their original model.');}
 async function testModel(id){
@@ -138,7 +138,7 @@ on('test-model-button','click',()=>testModel(state.editingModel));
 $('model-form').addEventListener('invalid',e=>modelStatus(e.target.validationMessage,true),true);
 on('model-form','submit',async()=>{
   $('save-model-button').disabled=true;modelStatus('');
-  try{const payload={name:$('model-name').value,provider:$('model-provider').value,model:$('model-id').value,api_key:$('model-api-key').value,clear_api_key:$('model-clear-key').checked,max_output_tokens:Number($('model-max-output').value),max_input_chars:Number($('model-max-input').value),disable_thinking:$('model-disable-thinking').checked};if(payload.provider==='local')payload.base_url=$('model-base-url').value;
+  try{const payload={name:$('model-name').value,provider:$('model-provider').value,model:$('model-id').value,api_key:$('model-api-key').value,clear_api_key:$('model-clear-key').checked,max_output_tokens:Number($('model-max-output').value),max_input_chars:Number($('model-max-input').value),max_planning_turns:Number($('model-max-turns').value),disable_thinking:$('model-disable-thinking').checked};if(payload.provider==='local')payload.base_url=$('model-base-url').value;
     const profile=await api('/model-profiles'+(state.editingModel?'/'+state.editingModel:''),state.editingModel?'PUT':'POST',payload);$('model-api-key').value='';await api('/model-selection','POST',{profile_id:profile.id});await refresh();editModel(profile.id);modelStatus('Profile saved and selected. Test the connection, then create your plan in Workspace.');toast('Model saved and selected.');
   }finally{$('save-model-button').disabled=false;}
 });

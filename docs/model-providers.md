@@ -88,3 +88,19 @@ Light, Dark and System preferences are stored in browser localStorage, never in 
 credentials. The saved preference applies before the first paint, synchronizes across
 tabs, and tracks OS changes in System mode. If browser storage is blocked, the current
 session still works with the OS preference. All controls use the same blue/navy tokens.
+
+### Planning limits
+
+Planning turns (4–32, default 16) controls orchestrator replies per plan, independently
+of output tokens and input characters. Existing profiles use 16 when this field is
+absent. Specialists retain their own three-turn limit and share an additional bounded
+allowance of 12 model calls; the independent final review remains separate.
+The last turn asks the model to finish or request missing information. Three identical
+tool requests within one agent stop planning to avoid loops. Activity in Background
+activity survives failed jobs and shows completed, rejected, and blocked actions,
+without storing tool arguments or response bodies there.
+
+For Qwen, start with 16 planning turns, 4096 output tokens, and 48000 input characters.
+Raise turns toward 24 only for tasks making progress; more turns can increase latency
+and cloud costs. Match input/output capacity to the context configured in llama.cpp.
+A failed job must be submitted again; it does not resume automatically.

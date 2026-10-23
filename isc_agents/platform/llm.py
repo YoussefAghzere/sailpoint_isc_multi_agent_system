@@ -40,7 +40,7 @@ def local_base_url(value):
 
 
 def validate_config(config):
-    if set(config) - {"provider", "model", "base_url", "max_output_tokens", "max_input_chars", "disable_thinking"}:
+    if set(config) - {"provider", "model", "base_url", "max_output_tokens", "max_input_chars", "disable_thinking", "max_planning_turns"}:
         raise Rejected("Unknown model configuration fields")
     provider = config.get("provider")
     if not isinstance(provider, str) or provider not in PROVIDERS:
@@ -53,6 +53,9 @@ def validate_config(config):
         model = model.removeprefix("models/")
         if not re.fullmatch(r"[A-Za-z0-9_.-]{1,160}", model):
             raise Rejected("Gemini model ID must be a model name, not a URL")
+    turns = config.get("max_planning_turns", 16)
+    if type(turns) is not int or not 4 <= turns <= 32:
+        raise Rejected("Planning turns must be an integer from 4 to 32")
     output = config.get("max_output_tokens", 4096 if provider == "local" else 6000)
     budget = config.get("max_input_chars", 48000 if provider == "local" else 100000)
     if type(output) is not int or not 512 <= output <= 12000:
@@ -65,7 +68,7 @@ def validate_config(config):
         raise Rejected("Cloud provider endpoints are fixed; only local profiles accept a server URL")
     return {"provider": provider, "model": model,
             "base_url": local_base_url(config.get("base_url") or "http://127.0.0.1:8080/v1") if provider == "local" else "",
-            "max_output_tokens": output, "max_input_chars": budget, "disable_thinking": config.get("disable_thinking", True)}
+            "max_output_tokens": output, "max_input_chars": budget, "max_planning_turns": turns, "disable_thinking": config.get("disable_thinking", True)}
 
 
 class ProviderModel:

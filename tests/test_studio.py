@@ -443,6 +443,63 @@ class StudioTests(unittest.TestCase):
         self.assertEqual(output["budget"]["agents"], 2)
         self.assertTrue(output["result"]["questions"])
 
+    def test_planning_can_continue_past_eight_turns(self):
+        class Model:
+            config = {"max_planning_turns": 16}
+            calls = 0
+            def generate(self, role, context, schema=None):
+                self.calls += 1
+                if self.calls == 10:
+                    return {"action": "ask", "summary": "Need owner", "arguments": '{"questions":["Who owns this source?"]}'}
+                return {"action": "catalog", "summary": "Search contract", "arguments": json.dumps({"query": str(self.calls)})}
+        model = Model()
+        agent = Orchestrator(model, Research(self.db, self.http), self.catalog,
+            ISC(self.db, self.envs, self.http, self.env["id"]), self.env, ToolRegistry(self.db, self.env))
+        self.assertTrue(agent.run("Integrate HR")["result"]["questions"])
+        self.assertEqual(model.calls, 10)
+
+    def test_repeated_failed_tool_is_stopped_and_reported(self):
+        events = []
+        class Model:
+            def generate(self, role, context, schema=None):
+                return {"action": "catalog", "summary": "Inspect contract", "arguments": '{"operation_id":"doesNotExist"}'}
+        agent = Orchestrator(Model(), Research(self.db, self.http), self.catalog,
+            ISC(self.db, self.envs, self.http, self.env["id"]), self.env, ToolRegistry(self.db, self.env), heartbeat=lambda e: events.append(dict(e)))
+        with self.assertRaisesRegex(Rejected, "repeated the same tool"):
+            agent.run("Integrate HR")
+        self.assertEqual(agent.budget.tools, 2)
+        self.assertEqual([e.get("status") for e in events].count("tool_rejected"), 2)
+        self.assertEqual(events[-1]["status"], "repeated_action_blocked")
+
+    def test_last_planning_turn_requests_finish_without_extra_tool_call(self):
+        class Model:
+            config = {"max_planning_turns": 4}
+            calls = 0
+            def generate(self, role, context, schema=None):
+                self.calls += 1
+                if self.calls == 4:
+                    assert context["planning_budget"]["turns_remaining"] == 1
+                return {"action": "catalog", "summary": "Search contract", "arguments": json.dumps({"query": str(self.calls)})}
+        agent = Orchestrator(Model(), Research(self.db, self.http), self.catalog,
+            ISC(self.db, self.envs, self.http, self.env["id"]), self.env, ToolRegistry(self.db, self.env))
+        with self.assertRaisesRegex(Rejected, "Planning turn limit"):
+            agent.run("Integrate HR")
+        self.assertEqual(agent.budget.tools, 3)
+
+    def test_failed_job_preserves_tool_activity(self):
+        class Model:
+            def generate(self, role, context, schema=None):
+                return {"action": "catalog", "summary": "Inspect contract", "arguments": '{"operation_id":"doesNotExist"}'}
+        job = self.db.enqueue("plan", self.env["id"], {"prompt": "Create HR source", "actor": "operator"})
+        Worker(self.db, self.envs, self.http, model=Model()).run_one()
+        row = self.db.one("SELECT * FROM jobs WHERE id=?", (job,))
+        self.assertEqual(row["state"], "failed")
+        self.assertIn("repeated the same tool", row["error"])
+        activity = json.loads(row["result"])["activity"]
+        self.assertEqual([e.get("status") for e in activity], ["tool_rejected", "tool_rejected", "repeated_action_blocked"])
+        self.assertNotIn("doesNotExist", row["result"])
+        self.assertEqual(self.tenant.mutations, 0)
+
     def test_model_planning_job_builds_a_reviewed_plan_without_writes(self):
         Research(self.db, self.http).ingest("https://developer.sailpoint.com/synthetic-test-evidence", "Create source HR prerequisites", "Synthetic official-labelled test document", "official")
         requests = []

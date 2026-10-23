@@ -141,6 +141,14 @@ class ProfileTests(unittest.TestCase):
     def local(self, owner="alice"):
         return self.profiles.save(owner, {"name": "My Qwen", "provider": "local", "model": "qwen", "base_url": "http://127.0.0.1:8080/v1"})
 
+    def test_planning_turns_are_validated_and_persisted(self):
+        base = {"name": "Qwen", "provider": "local", "model": "qwen"}
+        self.assertEqual(self.profiles.save("alice", base)["max_planning_turns"], 16)
+        self.assertEqual(self.profiles.save("alice", {**base, "max_planning_turns": 24})["max_planning_turns"], 24)
+        for value in (True, 3, 33, "16", None):
+            with self.subTest(value=value), self.assertRaises(Rejected):
+                self.profiles.save("alice", {**base, "max_planning_turns": value})
+
     @patch.dict(os.environ, {}, clear=True)
     def test_local_model_selection_works_without_any_cloud_keys(self):
         profile = self.local()

@@ -59,8 +59,16 @@ class Worker:
         return True
 
     def heartbeat(self, job_id, event):
+        row = self.db.one("SELECT result FROM jobs WHERE id=? AND owner=?", (job_id, self.owner))
+        previous = json.loads(row["result"] or "{}") if row else {}
+        activity = previous.get("activity", [])
+        if event.get("action"):
+            if activity and activity[-1].get("role") == event.get("role") and activity[-1].get("action") == event.get("action") and "status" not in activity[-1]:
+                activity[-1] = dict(event)
+            else:
+                activity.append(dict(event))
         self.db.execute("UPDATE jobs SET lease_until=?,result=?,updated=? WHERE id=? AND owner=?",
-                        (time.time() + 300, canonical({"progress": event}), time.time(), job_id, self.owner))
+                        (time.time() + 300, canonical({"progress": event, "activity": activity[-100:]}), time.time(), job_id, self.owner))
 
     def handle(self, job):
         payload = job["payload"]
