@@ -23,6 +23,8 @@ from .db import DB, decoded
 from .environments import Environments
 from .isc import ISC
 from .jobs import Worker
+from .model_profiles import ModelProfiles
+from .llm import PROVIDERS
 from .network import HTTP
 from .research import Research, OFFICIAL_HOSTS
 from .security import Vault, authenticate, authorize, password_hash, restricted_write, session, public_url
@@ -46,6 +48,7 @@ class Context:
         self.vault = Vault(settings.directory)
         self.http = http or HTTP()
         self.envs = Environments(self.db, self.vault)
+        self.models = ModelProfiles(self.db, self.vault)
         self.catalog = Catalog(self.db)
         self.workflows = Workflows(self.db, self.envs, self.isc)
         self.research = Research(self.db, self.http, os.environ.get("BRAVE_SEARCH_API_KEY"),
@@ -103,7 +106,7 @@ def create_app(settings=None):
         if thread:
             thread.join(timeout=2)
 
-    app = FastAPI(title="ISC Integration Studio", version="0.2.0", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(title="ISC Integration Studio", version="0.3.0", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.settings = settings
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(settings.allowed_hosts))
 
@@ -184,10 +187,58 @@ def create_app(settings=None):
 
     @app.get("/api/me")
     def me(ctx=Depends(context)):
+        error = None
+        try:
+            selected_model = ctx.models.snapshot(ctx.user["user_id"])
+        except Rejected as exc:
+            selected_model, error = None, str(exc)
         return {"user": {"id": ctx.user["user_id"], "role": ctx.user["role"]}, "csrf": ctx.user["csrf"],
-                "model_configured": bool(os.environ.get("OPENAI_API_KEY") and os.environ.get("ISC_MODEL")),
+                "model_configured": bool(selected_model), "selected_model": selected_model, "model_error": error,
                 "search_configured": bool(os.environ.get("BRAVE_SEARCH_API_KEY")),
-                "model": os.environ.get("ISC_MODEL")}
+                "model": selected_model["model"] if selected_model else None}
+
+    @app.get("/api/model-profiles")
+    def model_profiles(ctx=Depends(context)):
+        try:
+            server = ctx.models.snapshot(ctx.user["user_id"], "")
+        except Rejected:
+            server = None
+        return {"profiles": ctx.models.list(ctx.user["user_id"]), "selected_id": ctx.models.selected_id(ctx.user["user_id"]),
+                "server_default": server, "providers": [{"id": k, "label": v["label"]} for k, v in PROVIDERS.items()]}
+
+    @app.post("/api/model-profiles")
+    def create_model_profile(payload: dict, ctx=Depends(context)):
+        return ctx.models.save(ctx.user["user_id"], payload)
+
+    @app.put("/api/model-profiles/{pid}")
+    def update_model_profile(pid: str, payload: dict, ctx=Depends(context)):
+        return ctx.models.save(ctx.user["user_id"], payload, pid)
+
+    @app.delete("/api/model-profiles/{pid}")
+    def delete_model_profile(pid: str, ctx=Depends(context)):
+        ctx.models.delete(ctx.user["user_id"], pid)
+        return {"ok": True}
+
+    @app.post("/api/model-selection")
+    def select_model(payload: dict, ctx=Depends(context)):
+        profile_id = payload.get("profile_id")
+        if profile_id is not None and not isinstance(profile_id, str):
+            raise Rejected("Choose a saved model profile")
+        ctx.models.select(ctx.user["user_id"], profile_id)
+        return {"selected_model": ctx.models.snapshot(ctx.user["user_id"])}
+
+    @app.post("/api/model-profiles/{pid}/test")
+    def test_model_profile(pid: str, ctx=Depends(context)):
+        snapshot = ctx.models.snapshot(ctx.user["user_id"], pid)
+        model = ctx.models.model(ctx.http, ctx.user["user_id"], snapshot)
+        result = model.generate("Connection test: return exactly the requested JSON object with ok=true",
+            {"task": "Return a JSON object with ok=true. No tenant data is supplied and no tools should be called."},
+            {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"], "additionalProperties": False})
+        if result != {"ok": True}:
+            raise Rejected("The server responded but failed the structured-output test")
+        with ctx.db.tx():
+            ctx.db.audit(ctx.user["user_id"], None, "model_profile.tested", {"id": pid, "provider": snapshot["provider"], "model": snapshot["model"]})
+        return {"ok": True, "provider": snapshot["provider"], "model": snapshot["model"], "message": "Connected; structured JSON output validated"}
 
     @app.post("/api/logout")
     def logout(response: Response, ctx=Depends(context)):
@@ -299,12 +350,19 @@ def create_app(settings=None):
 
     @app.post("/api/environments/{eid}/plan")
     def plan(eid: str, payload: dict, ctx=Depends(context)):
-        env_access(ctx, eid, mutate=True)
+        environment = env_access(ctx, eid, mutate=True)
         prompt = payload.get("prompt", "")
         if not isinstance(prompt, str) or not 1 <= len(prompt) <= 12000 or type(payload.get("external", False)) is not bool:
             raise Rejected("Provide a bounded prompt and boolean research consent")
+        if payload.get("model_profile_id") is not None and not isinstance(payload["model_profile_id"], str):
+            raise Rejected("Choose a saved model profile")
+        snapshot = None
+        if environment["backend"] == "isc" and not payload.get("proposal"):
+            snapshot = ctx.models.snapshot(ctx.user["user_id"], payload.get("model_profile_id"))
+            if not snapshot:
+                raise Rejected("Choose a model in Models & appearance. Local Qwen or Llama through llama.cpp needs no OpenAI account")
         job_id = ctx.db.enqueue("plan", eid, {"prompt": prompt, "external": payload.get("external", False),
-            "requirements": payload.get("requirements"), "proposal": payload.get("proposal"), "actor": ctx.user["user_id"]})
+            "requirements": payload.get("requirements"), "proposal": payload.get("proposal"), "actor": ctx.user["user_id"], "model_profile": snapshot})
         return {"job_id": job_id}
 
     @app.get("/api/environments/{eid}/runs")

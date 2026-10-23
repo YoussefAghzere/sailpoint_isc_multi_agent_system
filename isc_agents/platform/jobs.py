@@ -9,6 +9,7 @@ from .catalog import Catalog
 from .db import decoded
 from .isc import ISC
 from .research import Research
+from .model_profiles import ModelProfiles
 from .specialists import Orchestrator, PlannerModel, ToolRegistry
 from .workflows import Workflows
 
@@ -97,13 +98,15 @@ class Worker:
             elif payload.get("proposal"):
                 run = self.workflows.compile(environment_id, payload["proposal"], payload["actor"], request_prompt=payload["prompt"])
             else:
-                model = self.model or PlannerModel(self.http, os.environ.get("ISC_MODEL"))
+                profiles = ModelProfiles(self.db, self.environments.vault)
+                model_snapshot = payload.get("model_profile") if "model_profile" in payload else profiles.snapshot(payload["actor"])
+                model = self.model or profiles.model(self.http, payload["actor"], model_snapshot)
                 registry = ToolRegistry(self.db, env)
                 agent = Orchestrator(model, self.research, self.catalog, self.isc(environment_id), env, registry,
                                      external=payload.get("external", False), heartbeat=lambda e: self.heartbeat(job["id"], e))
                 attachments = self.db.all("SELECT id,name,size FROM attachments WHERE environment_id=?", (environment_id,))
                 output = agent.run(payload["prompt"], attachments)
                 run = self.workflows.compile(environment_id, output["result"], payload["actor"], model=model,
-                    trace=output["trace"], evidence=output["evidence"], request_prompt=payload["prompt"])
+                    trace=output["trace"], evidence=output["evidence"], request_prompt=payload["prompt"], model_metadata=model_snapshot)
             return {"run_id": run["id"], "status": run["status"]}
         raise Rejected("Unknown job kind")

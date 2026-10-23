@@ -4,7 +4,7 @@ An authenticated workspace for SailPoint ISC integration engineering: selectable
 client environments, encrypted credentials, documentation ingestion, contract-driven
 API tools, bounded specialist agents, exact-plan approvals and persistent execution.
 
-**Version 0.2 is a working engineering platform, not a certified autonomous integrator.**
+**Version 0.3 is a working engineering platform, not a certified autonomous integrator.**
 Live API execution is implemented and tested against synthetic tenant HTTP responses.
 No customer credentials were supplied, so no customer integration, correlation or
 provisioning outcome has been verified. Start in a sandbox.
@@ -31,18 +31,61 @@ inspect the plan, approve it, then execute it. Simulated changes never reach ISC
 
 ## Configure real agents and environments
 
-Provision these settings through your server's secret/configuration mechanism:
+Open **Models & appearance** after signing in. Create a model profile, save it,
+test its structured JSON connection, and select it in Workspace. Supported providers:
+
+- **Local llama.cpp:** run an instruction-tuned Qwen or Llama GGUF on your own machine.
+  No OpenAI account or cloud API key is required.
+- **OpenAI, Claude, Gemini:** enter the appropriate provider API key and model ID.
+  Keys are encrypted, write-only and private to your signed-in user.
+
+For a local model on a Mac, in a separate terminal:
+
+```bash
+brew install llama.cpp
+llama-server -m /path/to/model.gguf --alias qwen --jinja \
+  --host 127.0.0.1 --port 8080 --ctx-size 32768 --parallel 1
+```
+
+Replace the file path with your downloaded model. Keep llama-server running. In
+Studio, use provider **Local · llama.cpp**, model ID **qwen**, and base URL
+**http://127.0.0.1:8080/v1**. Save and test. You can use the same setup with a Llama
+GGUF; the model ID is the server alias, not a model download instruction.
+
+The backend must run on the same machine to reach that machine's localhost. A remotely
+hosted Studio cannot reach your Mac through its own localhost. Explicit remote/LAN
+origins need server configuration via `ISC_LLM_LOCAL_ORIGINS`; do not expose an
+unauthenticated llama.cpp server publicly. See [provider setup](docs/model-providers.md).
+
+You can switch profiles without restarting the app. Jobs pin the chosen model and
+profile revision when queued. Editing a queued job's profile requires a new plan;
+switching your current selection does not retarget that job. Approved execution
+continues to use the reviewed API change set; it does not call another model.
+
+Optional server-level defaults and research settings:
 
 | Setting | Purpose |
 | --- | --- |
-| `OPENAI_API_KEY` | OpenAI Responses API credential |
-| `ISC_MODEL` | Model supporting Responses API strict structured outputs |
+| `ISC_LLM_PROVIDER` | `local`, `openai`, `anthropic`, or `gemini`; default `openai` |
+| `ISC_MODEL` | Provider model ID or local server alias |
+| `ISC_LLM_BASE_URL` | Local server URL; default `http://127.0.0.1:8080/v1` |
+| `ISC_LLM_API_KEY` | Optional local server authentication key |
+| `OPENAI_API_KEY` | OpenAI server-default credential, only for OpenAI |
+| `ANTHROPIC_API_KEY` | Claude server-default credential |
+| `GEMINI_API_KEY` | Gemini server-default credential |
 | `BRAVE_SEARCH_API_KEY` | Optional Brave internet search credential |
 | `ISC_MASTER_KEY` | Recommended: externally supplied Fernet encryption key |
 | `ISC_RESEARCH_HOSTS` | Optional additional exact HTTPS research hosts, comma separated |
 
-Restart after changing server configuration. Without a model, simulation and manually
-authored live workflows remain available. Agent planning does not silently use a mock.
+Restart only after changing server environment variables. Saved UI profiles take
+precedence over server defaults. Without a model, simulation and manually authored
+live workflows remain available. There is no automatic paid-provider fallback.
+
+**Appearance:** choose Light, Dark or System in the header or Models & appearance.
+The blue/navy palette is inspired by Magellan Group. The choice persists in this
+browser, applies to sign-in, and follows OS changes when System is selected.
+Existing environments remain in `work/platform-v2/platform.db`; upgrading does not
+rename the data directory or delete existing records.
 
 In **Environments**, an administrator enters the name, client identifier, stage,
 backend, tenant base URL, client ID, client secret, API contract and explicit write
@@ -106,7 +149,8 @@ See [workflow contracts and recovery](docs/workflows.md).
 
 Default research hosts: `documentation.sailpoint.com`, `developer.sailpoint.com`,
 `community.sailpoint.com`, `stackoverflow.com`. The runtime also needs HTTPS egress
-to `raw.githubusercontent.com`, `api.openai.com`, `api.search.brave.com`, and the exact
+to `raw.githubusercontent.com`, `api.search.brave.com`, the selected cloud provider
+(`api.openai.com`, `api.anthropic.com`, or `generativelanguage.googleapis.com`), and the exact
 ISC tenant origin. This workspace permits the official GitHub repository but does
 not currently list the documentation, forum, model or search destinations. Configure
 the runtime's supported network policy; application allowlists cannot override it.
@@ -151,9 +195,10 @@ An isolated generated-code test/deployment service remains a future extension.
   Prompts, plans, documents and masked results rely on filesystem/disk protection;
   they are not field-encrypted.
 
-OpenAI requests use `store: false`, but selected tenant context and evidence still
-leave the server. External research sends queries to its provider. Follow client
-data policies; the UI explicitly describes this data flow.
+OpenAI requests use `store: false`. Cloud profiles send selected context and evidence
+to that provider under its policies. Local inference calls only the saved local model
+endpoint; it does not forward a configured cloud key. Tenant API calls and opted-in
+external research remain separate network activity. The UI describes this data flow.
 
 Jobs, leases, steps and results are durable in SQLite. A `sending` checkpoint precedes
 each remote mutation. Crashes, uncertain timeouts, server errors and invalid mutation
@@ -174,6 +219,8 @@ consequential effects and require substantive review.
 ```bash
 python -m unittest discover -s tests -v
 node --check isc_agents/platform/static/app.js
+node tests/theme.test.cjs
+node tests/models-ui.test.cjs
 python -m isc_agents.platform.evaluate
 python -m isc_agents.platform.server sync-specs
 python -m isc_agents.platform.server worker --once
@@ -187,10 +234,14 @@ For remote access, use a TLS reverse proxy, `ISC_PUBLIC_ORIGIN=https://your-host
 `ISC_ALLOWED_HOSTS=your-host`, and the intended bind interface. Remote binding without
 HTTPS configuration is refused. This does not configure TLS or SSO automatically.
 
-Tests cover authentication, CSRF, grants, encryption, API contracts, source workflows,
+Tests cover provider-specific protocols, keyless local inference, profile ownership,
+encrypted model keys, queued-model pinning, database migration, appearance behavior,
+authentication, CSRF, grants, encryption, API contracts, source workflows,
 drift, approvals, polling, ambiguous outcomes, reconciliation, delegation, tools,
 crawling, compression, multipart requests, CSV quality and the original CLI. Model
 responses are mocked. Real connector business outcomes still need sandbox validation.
+No real Qwen/Llama model or paid provider was available in this execution environment;
+use the connection test to verify your selected running model before planning.
 
 The six-case retrieval baseline records API selection recall against the exact pinned
 specification hash. Extend `evaluations/api-retrieval.json` with regression cases for

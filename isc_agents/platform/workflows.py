@@ -102,7 +102,7 @@ class Workflows:
                 "review": {"approved": True, "findings": ["Structural simulation checks only; no live ISC actions"]}}
         return self._save(environment_id, actor, plan, "planned")
 
-    def compile(self, environment_id, proposal, actor, *, model=None, trace=(), evidence=(), request_prompt="Manually authored workflow"):
+    def compile(self, environment_id, proposal, actor, *, model=None, trace=(), evidence=(), request_prompt="Manually authored workflow", model_metadata=None):
         if proposal.get("questions"):
             return self.questions(environment_id, actor, proposal["questions"], trace)
         try:
@@ -183,7 +183,7 @@ class Workflows:
                 "verification sufficiency, missing prerequisites, client decisions, and rollback limitations. Reject unsafe or "
                 "incomplete workflows. Your approval is advisory only.",
                 {"request": request_prompt, "proposal": proposal, "environment": env, "evidence": list(evidence)[:6]}, REVIEW_SCHEMA)
-        plan = {**proposal, "request": request_prompt, "steps": steps, "backend": "isc", "environment_revision": env["revision"],
+        plan = {**proposal, "request": request_prompt, "model": model_metadata, "steps": steps, "backend": "isc", "environment_revision": env["revision"],
                 "spec_id": env["spec_id"], "review": review, "trace": list(trace),
                 "evidence": list(evidence), "recovery": "Pause ambiguous mutations; reconcile with read-only evidence before continuing. No automatic rollback."}
         return self._save(environment_id, actor, plan, "planned" if review["approved"] else "rejected")

@@ -56,28 +56,14 @@ Finish only if the entire requested scope has a verifiable plan. Otherwise ask f
 
 
 class PlannerModel:
+    """Compatibility wrapper for existing server-level OpenAI configuration."""
     def __init__(self, http, model):
-        self.http, self.model = http, model
-        if not os.environ.get("OPENAI_API_KEY") or not model:
-            raise Rejected("Agent planning requires OPENAI_API_KEY and ISC_MODEL")
+        from .llm import ProviderModel
+        self.adapter = ProviderModel(http, {"provider": "openai", "model": model}, os.environ.get("OPENAI_API_KEY", ""))
+        self.model, self.max_input_chars = self.adapter.model, self.adapter.max_input_chars
 
     def generate(self, role, context, schema=ACTION_SCHEMA):
-        response = self.http.require_ok(self.http.request("POST", "https://api.openai.com/v1/responses",
-            headers={"Authorization": "Bearer " + os.environ["OPENAI_API_KEY"], "Content-Type": "application/json"},
-            json={"model": self.model, "instructions": SYSTEM + "\nYour role: " + role,
-                  "input": canonical(context), "store": False, "max_output_tokens": 6000,
-                  "text": {"format": {"type": "json_schema", "name": "next_action", "strict": True, "schema": schema}}}))
-        result = response.json()
-        parts = [p["text"] for item in result.get("output", []) for p in item.get("content", [])
-                 if p.get("type") == "output_text"]
-        if result.get("status") != "completed" or len(parts) != 1:
-            raise Rejected("Model output was incomplete or refused; no execution authorized")
-        try:
-            value = json.loads(parts[0])
-            jsonschema.validate(value, schema)
-        except (ValueError, jsonschema.ValidationError):
-            raise Rejected("Model returned invalid structured output") from None
-        return value
+        return self.adapter.generate(role, context, schema)
 
 
 class ToolRegistry:
@@ -171,9 +157,12 @@ class Orchestrator:
             self.budget.calls += 1
             self.heartbeat({"role": role, "calls": self.budget.calls})
             model_input = {"context": context, "history": history[-4:]}
+            limit = getattr(self.model, "max_input_chars", 100000)
+            while model_input["history"] and len(canonical(model_input)) > limit:
+                model_input["history"] = model_input["history"][1:]
             characters = len(canonical(model_input))
             self.budget.input_characters += characters
-            if characters > 100000 or self.budget.input_characters > 600000:
+            if characters > min(limit, 100000) or self.budget.input_characters > 600000:
                 raise Rejected("Shared model input budget exhausted; narrow the task")
             action = self.model.generate(role, model_input)
             try:

@@ -1,4 +1,4 @@
-# Implemented architecture: v0.2
+# Implemented architecture: v0.3
 
 ```mermaid
 flowchart TB
@@ -7,6 +7,9 @@ flowchart TB
     ENV --> VAULT[Encrypted credentials and CSV attachments]
     AUTH --> QUEUE[Persistent jobs / schedules / leases]
     QUEUE --> ORCH[Bounded orchestration agent]
+    AUTH --> MODELS[Per-user encrypted model profiles / selection]
+    MODELS --> ROUTER[OpenAI / Claude / Gemini / local llama.cpp]
+    ROUTER --> ORCH
     ORCH --> SPECIALISTS[Researcher / connector architect / validator]
     ORCH --> RESEARCH[Scoped evidence / approved page fetch / Brave search]
     RESEARCH --> CORPUS[(Document snapshots / FTS5)]
@@ -65,7 +68,11 @@ provisioning. The quality of expected-value assertions remains an engineering co
   multipart forms and CSV quality checks.
 - Verified through TestClient: authentication, CSRF, access grants, environment setup,
   simulation planning, approval and queued execution.
-- Unverified against live services here: model reasoning, Brave search, product-docs
+- Provider adapters are verified with protocol fixtures, including keyless local
+  planning, profile ownership, queued-model pinning and preservation of existing
+  environment records. Local and cloud models use the same validation and authority gates.
+- Light/dark/system preference behavior is verified with a simulated browser/OS event harness.
+- Unverified against live services here: actual model reasoning, Brave search, product-docs
   crawling, and customer tenant operations. Credentials were not supplied and the
   configured runtime egress does not include those destinations.
 - Browser automation was unavailable. HTML serving and JavaScript syntax were checked;

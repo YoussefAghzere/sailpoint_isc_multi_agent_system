@@ -1,6 +1,6 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const state = {csrf: '', me: null, envs: [], specs: [], eid: '', editing: '', run: null, selectedRun: '', jobs: [], tab: 'workspace', pendingPlan: '', audit: []};
+const state = {csrf: '', me: null, envs: [], specs: [], eid: '', editing: '', run: null, selectedRun: '', jobs: [], tab: 'workspace', pendingPlan: '', audit: [], modelData: {profiles:[],selected_id:'',server_default:null}, editingModel:'', testingModels:new Set()};
 const sample = {source_name:'Example HR',connector:'delimited-file',authoritative:true,account_id:'employeeId',correlation_attribute:'employeeId',attributes:['employeeId','firstName','lastName','email','department','status'],mappings:[{source:'employeeId',identity:'employeeNumber'},{source:'email',identity:'email'},{source:'department',identity:'department'},{source:'status',identity:'employmentStatus'}]};
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const pretty = value => JSON.stringify(value, null, 2);
@@ -15,11 +15,11 @@ async function api(path, method='GET', body) {
   if(!response.ok){if(response.status===401){state.me=null;$('app').hidden=true;$('login-screen').hidden=false;}throw new Error(result.error || 'Request failed');}return result;
 }
 function environmentStatus(message,error=false){const status=$('environment-status');status.textContent=message;status.hidden=!message;status.classList.toggle('error',error);}
-function on(id,event,handler){$(id).addEventListener(event,async e=>{if(event==='submit')e.preventDefault();try{await handler(e);}catch(error){if(id==='environment-form')environmentStatus(error.message,true);toast(error.message,true);}});}
+function on(id,event,handler){$(id).addEventListener(event,async e=>{if(event==='submit')e.preventDefault();try{await handler(e);}catch(error){if(id==='environment-form')environmentStatus(error.message,true);if(id==='model-form')modelStatus(error.message,true);toast(error.message,true);}});}
 function requireEnv(){if(!env())throw new Error('Select an environment first');return env();}
 function download(name,content,type='application/json'){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([content],{type}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
 function table(headers,rows){return rows.length?`<div class="table-scroll"><table><thead><tr>${headers.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`:'<p class="empty">No activity yet.</p>';}
-function switchTab(tab){state.tab=tab;document.querySelectorAll('.tab').forEach(e=>e.hidden=e.id!=='tab-'+tab);document.querySelectorAll('.nav').forEach(e=>e.classList.toggle('active',e.dataset.tab===tab));$('page-name').textContent={workspace:'Workspace',environments:'Environments',knowledge:'Knowledge & research',tools:'Tools & specialists',audit:'Audit trail'}[tab];refresh().catch(e=>toast(e.message,true));}
+function switchTab(tab){state.tab=tab;document.querySelectorAll('.tab').forEach(e=>e.hidden=e.id!=='tab-'+tab);document.querySelectorAll('.nav').forEach(e=>e.classList.toggle('active',e.dataset.tab===tab));$('page-name').textContent={workspace:'Workspace',models:'Models & appearance',environments:'Environments',knowledge:'Knowledge & research',tools:'Tools & specialists',audit:'Audit trail'}[tab];refresh().catch(e=>toast(e.message,true));}
 document.querySelectorAll('.nav').forEach(button=>button.addEventListener('click',()=>switchTab(button.dataset.tab)));
 
 on('login-form','submit',async()=>{try{const login=await api('/login','POST',{username:$('username').value,password:$('password').value});state.csrf=login.csrf;$('password').value='';$('login-error').textContent='';await boot();}catch(e){$('login-error').textContent=e.message;}});
@@ -31,7 +31,7 @@ function renderEnvironments(){
   $('environment-select').innerHTML='<option value="">Select an environment</option>'+state.envs.map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join('');$('environment-select').value=state.eid;
   const current=env();$('environment-badge').className='badge '+(current?.stage||'');$('environment-badge').textContent=current?`${current.stage} · ${current.backend==='isc'?'live':'simulation'}`:'No environment';
   $('metric-env').textContent=current?.name||'Not selected';$('metric-tenant').textContent=current?.base_url||'Local simulated tenant';$('metric-policy').textContent=current?.backend==='isc'?(current.write_enabled?'Approved allowlisted writes':'Read-only tenant'):'Simulated execution';
-  $('plan-hint').textContent=!current?'Choose an environment to begin.':current.backend==='simulator'?'Offline simulation · explicit source requirements':state.me.model_configured?'Agent planning · no writes before approval':'Model not configured · manual workflows available';
+  $('plan-hint').textContent=!current?'Choose an environment to begin.':current.backend==='simulator'?'Offline simulation · explicit source requirements':state.me.model_configured?'Agent planning · no writes before approval':'Choose a local or cloud model in Models & appearance';
   $('plan-button').disabled=!current||state.me.user.role==='reviewer';$('discover').disabled=current?.backend!=='isc';
   $('environment-cards').innerHTML=state.envs.length?state.envs.map(e=>`<article class="environment-card ${e.id===state.eid?'active':''}"><strong>${esc(e.name)}</strong> ${badge(e.stage)}<p>${esc(e.client)} · ${esc(e.backend)}<br>${esc(e.base_url||'Local simulator')}</p><p>${e.has_credentials?'Encrypted credentials configured':'No live credentials'} · ${e.write_enabled?'Approved writes enabled':'Read-only policy'}</p><button class="text-button" data-env-edit="${esc(e.id)}">Edit environment →</button></article>`).join(''):'<p class="empty">Create your first environment.</p>';
   document.querySelectorAll('[data-env-edit]').forEach(b=>b.addEventListener('click',()=>editEnvironment(b.dataset.envEdit)));
@@ -52,7 +52,7 @@ on('environment-form','submit',async()=>{
   const saved=await api('/environments'+(state.editing?'/'+state.editing:''),state.editing?'PUT':'POST',payload);state.eid=saved.id;sessionStorage.setItem('isc-environment',state.eid);await refresh();editEnvironment(saved.id);setStructuredDefault();environmentStatus('Environment saved successfully.');toast('Environment saved. Earlier plans retain their old revision.');
 });
 on('user-form','submit',async()=>{const e=requireEnv();await api('/users','POST',{username:$('new-user-name').value,password:$('new-user-password').value,role:$('new-user-role').value,environments:[e.id]});$('new-user-password').value='';$('user-form').reset();toast('User created for '+e.name);});
-on('plan-form','submit',async()=>{const e=requireEnv();const structured=$('structured').value.trim()?JSON.parse($('structured').value):null;const payload={prompt:$('prompt').value,external:$('external').checked};if(e.backend==='simulator')payload.requirements=structured||sample;else if(structured)payload.proposal=structured;const result=await api(`/environments/${e.id}/plan`,'POST',payload);state.pendingPlan=result.job_id;toast('Planning job queued. Follow its progress in Background activity.');await refresh();});
+on('plan-form','submit',async()=>{const e=requireEnv();const structured=$('structured').value.trim()?JSON.parse($('structured').value):null;if(e.backend==='isc'&&!structured&&!state.me.model_configured){switchTab('models');toast('Add a local llama.cpp profile or choose a cloud model to enable agent planning.');return;}const payload={prompt:$('prompt').value,external:$('external').checked,model_profile_id:state.modelData.selected_id||''};if(e.backend==='simulator')payload.requirements=structured||sample;else if(structured)payload.proposal=structured;const result=await api(`/environments/${e.id}/plan`,'POST',payload);state.pendingPlan=result.job_id;toast('Planning job queued. Follow its progress in Background activity.');await refresh();});
 on('discover','click',async()=>{const e=requireEnv();await api(`/environments/${e.id}/discover`,'POST',{});toast('Read-only discovery queued.');await refresh();});
 on('csv-upload','change',async()=>{const e=requireEnv(),file=$('csv-upload').files[0];if(!file)return;if(file.size>5000000)throw new Error('CSV exceeds the 5 MB limit');const bytes=new Uint8Array(await file.arrayBuffer());let text='';for(let i=0;i<bytes.length;i+=16384)text+=String.fromCharCode(...bytes.subarray(i,i+16384));await api(`/environments/${e.id}/attachments`,'POST',{name:file.name,base64:btoa(text)});$('csv-upload').value='';toast('CSV encrypted and attached to '+e.name);await refresh();});
 on('refresh','click',refresh);
@@ -77,7 +77,7 @@ on('export-audit','click',()=>download('audit-'+requireEnv().id+'.json',pretty(s
 
 async function refresh(){
   if(!state.me)return;
-  const [envs,specs,jobs]=await Promise.all([api('/environments'),api('/specs'),api('/jobs')]);state.envs=envs;state.specs=specs;state.jobs=jobs;const wasEmpty=!state.eid;renderEnvironments();if(wasEmpty&&state.eid)setStructuredDefault();
+  const [envs,specs,jobs,models]=await Promise.all([api('/environments'),api('/specs'),api('/jobs'),api('/model-profiles')]);state.envs=envs;state.specs=specs;state.jobs=jobs;state.modelData=models;renderModels();const wasEmpty=!state.eid;renderEnvironments();if(wasEmpty&&state.eid)setStructuredDefault();
   $('jobs').innerHTML=table(['JOB','STATE','UPDATED','RESULT / PROGRESS'],jobs.slice(0,12).map(j=>[esc(j.kind),badge(j.state),esc(stamp(j.updated)),esc(j.error||pretty(j.result||{}))]));
   $('specs').innerHTML=table(['VERSION','CONTENT HASH','IMPORTED','ORIGIN'],specs.map(s=>[esc(s.version),esc(s.hash.slice(0,16)),esc(stamp(s.fetched)),`<a href="${esc(s.origin)}" target="_blank" rel="noopener noreferrer">Official specification ↗</a>`]));
   if(!state.eid){$('runs').innerHTML='<p class="empty">Create an environment to begin.</p>';return;}
@@ -97,5 +97,51 @@ async function refresh(){
   }
   if(state.tab==='audit'){state.audit=await api(`/environments/${eid}/audit`);$('audit').innerHTML=table(['TIME','ACTOR','EVENT','DETAILS'],state.audit.map(e=>[esc(stamp(e.at)),esc(e.actor),esc(e.kind),esc(pretty(e.details))]));}
 }
+const providerNames={local:'Local · llama.cpp',openai:'OpenAI',anthropic:'Claude',gemini:'Gemini'};
+function modelStatus(message,error=false){$('model-status').textContent=message;$('model-status').hidden=!message;$('model-status').classList.toggle('error',error);}
+function selectedModel(){return state.modelData.profiles.find(p=>p.id===state.modelData.selected_id)||state.modelData.server_default;}
+function renderModels(){
+  const data=state.modelData,current=selectedModel();state.me.model_configured=!!current;state.me.model=current?.model||null;
+  $('metric-model').textContent=current?`${providerNames[current.provider]} · ${current.model}`:'Choose a local or cloud model';
+  const options=`<option value="">${esc(data.server_default?'Server default · '+data.server_default.model:'No model selected')}</option>`+data.profiles.map(p=>`<option value="${esc(p.id)}">${esc(p.name+' · '+p.model)}</option>`).join('');
+  if($('planning-model-select').dataset.signature!==options){$('planning-model-select').innerHTML=options;$('planning-model-select').dataset.signature=options;}
+  $('planning-model-select').value=data.selected_id||'';
+  $('model-data-note').textContent=current?.provider==='local'?'Local inference · no OpenAI account needed. Studio connects to your saved llama.cpp endpoint; external research remains separate.':current?`${providerNames[current.provider]} receives selected context for reasoning. API credentials remain encrypted on the Studio backend.`:'Choose a saved model or configure local Qwen / Llama. No cloud subscription is required for local inference.';
+  $('model-profiles').innerHTML=data.profiles.length?data.profiles.map(p=>`<article class="model-profile ${p.id===data.selected_id?'active':''}"><div class="card-heading"><h3>${esc(p.name)}</h3>${badge(p.id===data.selected_id?'selected':p.provider==='local'?'local':'cloud')}</div><p>${esc(providerNames[p.provider])} · <strong>${esc(p.model)}</strong></p><p>${esc(p.provider==='local'?p.base_url:(p.has_api_key?'Encrypted API key configured':'No API key'))}</p><div class="model-profile-actions"><button class="secondary" data-use-model="${esc(p.id)}">Use this model</button><button class="text-button" data-edit-model="${esc(p.id)}">Edit</button><button class="text-button" data-test-model="${esc(p.id)}" ${state.testingModels.has(p.id)?'disabled':''}>${state.testingModels.has(p.id)?'Testing…':'Test JSON connection'}</button><button class="text-button" data-delete-model="${esc(p.id)}">Delete</button></div></article>`).join(''):'<p class="empty">No model profiles yet. Start with local llama.cpp—no cloud API key needed.</p>';
+  document.querySelectorAll('[data-edit-model]').forEach(b=>b.addEventListener('click',()=>editModel(b.dataset.editModel)));
+  document.querySelectorAll('[data-use-model]').forEach(b=>b.addEventListener('click',()=>useModel(b.dataset.useModel).catch(e=>toast(e.message,true))));
+  document.querySelectorAll('[data-test-model]').forEach(b=>b.addEventListener('click',()=>testModel(b.dataset.testModel).catch(e=>toast(e.message,true))));
+  document.querySelectorAll('[data-delete-model]').forEach(b=>b.addEventListener('click',async()=>{try{await api('/model-profiles/'+b.dataset.deleteModel,'DELETE');if(state.editingModel===b.dataset.deleteModel)editModel();await refresh();toast('Model profile deleted.');}catch(e){toast(e.message,true);}}));
+}
+function modelProviderFields(clear=false){
+  const provider=$('model-provider').value,isLocal=provider==='local';$('local-model-fields').hidden=!isLocal;$('model-base-url').disabled=!isLocal;
+  $('model-key-label').textContent=isLocal?'Server API key (optional)':providerNames[provider]+' API key';$('model-api-key').placeholder=isLocal?'Leave empty for keyless local llama.cpp':'Enter API key; leave blank to retain a saved key';
+  $('model-key-help').textContent=isLocal?'No cloud API key is needed. Only add a key if you enabled llama.cpp authentication.':'Keys are encrypted and write-only. Saving another provider never reuses the previous provider’s key.';
+  $('model-id').placeholder=isLocal?'qwen (the alias passed to llama-server)':'Exact model ID supported by your provider';
+  if(clear){$('model-api-key').value='';$('model-id').value=isLocal?'qwen':'';$('model-max-output').value=isLocal?'4096':'6000';$('model-max-input').value=isLocal?'48000':'100000';modelStatus('');}
+}
+function editModel(id=''){
+  const p=state.modelData.profiles.find(x=>x.id===id);state.editingModel=p?.id||'';$('model-form-title').textContent=p?'Edit model profile':'Connect a model';$('model-name').value=p?.name||'Local Qwen';$('model-provider').value=p?.provider||'local';$('model-id').value=p?.model||'qwen';$('model-base-url').value=p?.base_url||'http://127.0.0.1:8080/v1';$('model-api-key').value='';$('model-clear-key').checked=false;$('model-max-output').value=p?.max_output_tokens||(p?.provider&&p.provider!=='local'?6000:4096);$('model-max-input').value=p?.max_input_chars||48000;$('model-disable-thinking').checked=p?.disable_thinking??true;$('test-model-button').disabled=!p;modelProviderFields();modelStatus('');
+}
+async function useModel(id){await api('/model-selection','POST',{profile_id:id});await refresh();toast('Planning model selected. Existing queued jobs keep their original model.');}
+async function testModel(id){
+  if(!id)throw new Error('Save the model profile first.');state.testingModels.add(id);$('test-model-button').disabled=true;modelStatus('Testing structured JSON output. Local inference may take a little time…');renderModels();
+  try{const result=await api(`/model-profiles/${id}/test`,'POST',{});modelStatus(result.message+' · '+result.model);toast('Model connection and JSON schema test passed.');}
+  catch(e){modelStatus(e.message,true);throw e;}
+  finally{state.testingModels.delete(id);$('test-model-button').disabled=!state.editingModel;renderModels();}
+}
+on('configure-model','click',()=>switchTab('models'));
+on('new-model-profile','click',()=>editModel());
+on('model-provider','change',()=>modelProviderFields(true));
+on('planning-model-select','change',()=>useModel($('planning-model-select').value));
+on('test-model-button','click',()=>testModel(state.editingModel));
+$('model-form').addEventListener('invalid',e=>modelStatus(e.target.validationMessage,true),true);
+on('model-form','submit',async()=>{
+  $('save-model-button').disabled=true;modelStatus('');
+  try{const payload={name:$('model-name').value,provider:$('model-provider').value,model:$('model-id').value,api_key:$('model-api-key').value,clear_api_key:$('model-clear-key').checked,max_output_tokens:Number($('model-max-output').value),max_input_chars:Number($('model-max-input').value),disable_thinking:$('model-disable-thinking').checked};if(payload.provider==='local')payload.base_url=$('model-base-url').value;
+    const profile=await api('/model-profiles'+(state.editingModel?'/'+state.editingModel:''),state.editingModel?'PUT':'POST',payload);$('model-api-key').value='';await api('/model-selection','POST',{profile_id:profile.id});await refresh();editModel(profile.id);modelStatus('Profile saved and selected. Test the connection, then create your plan in Workspace.');toast('Model saved and selected.');
+  }finally{$('save-model-button').disabled=false;}
+});
+modelProviderFields();
 boot().catch(()=>{});
 setInterval(()=>{if(state.me&&!document.hidden)refresh().catch(e=>toast(e.message,true));},6000);
