@@ -1,0 +1,8 @@
+{
+  "id": "simulation-source-v1",
+  "title": "Local simulator: delimited-file HR source contract",
+  "origin": "local://contracts/simulator-source",
+  "version": "1.0",
+  "trust": "fixture",
+  "content": "This is a project-owned fixture, not SailPoint documentation. The simulator can store a delimited-file source specification with account_id, correlation_attribute, authoritative intent, source attributes and identity mappings. The account identifier and correlation attribute must exist in the schema. Identity mapping targets must be unique. All operations are scoped to client, tenant and environment. Source creation and updates are simulated configuration storage only. No SailPoint API payload or endpoint is defined here. Marking an HR source authoritative does not create identity profiles, import accounts, correlate identities, enable provisioning or configure joiner mover leaver workflows. An operator must inspect and approve the exact change digest before simulated execution."
+}

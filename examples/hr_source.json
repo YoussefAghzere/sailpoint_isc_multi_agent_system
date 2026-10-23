@@ -1,0 +1,16 @@
+{
+  "source_name": "Example HR",
+  "connector": "delimited-file",
+  "authoritative": true,
+  "account_id": "employeeId",
+  "correlation_attribute": "employeeId",
+  "attributes": ["employeeId", "firstName", "lastName", "email", "department", "status"],
+  "mappings": [
+    {"source": "employeeId", "identity": "employeeNumber"},
+    {"source": "firstName", "identity": "firstname"},
+    {"source": "lastName", "identity": "lastname"},
+    {"source": "email", "identity": "email"},
+    {"source": "department", "identity": "department"},
+    {"source": "status", "identity": "employmentStatus"}
+  ]
+}
