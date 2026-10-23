@@ -390,6 +390,22 @@ class StudioTests(unittest.TestCase):
             with self.subTest(url=url), self.assertRaises(Rejected):
                 tenant_url(url)
 
+    def test_standard_and_demo_api_origins_are_supported(self):
+        for origin in ("https://example.api.identitynow.com", "https://example.api.identitynow-demo.com"):
+            with self.subTest(origin=origin):
+                self.assertEqual(tenant_url(origin + "/"), origin)
+        for host in ("example.identitynow.com", "example.identitynow-demo.com"):
+            with self.subTest(host=host), self.assertRaisesRegex(Rejected, "SailPoint web URL.*https://example.api"):
+                tenant_url("https://" + host)
+        for host in ("example.api.identitynow-demo.com.evil.example", "example.api.identitynow-demo.com@evil.example"):
+            with self.subTest(host=host), self.assertRaises(Rejected):
+                tenant_url("https://" + host)
+
+    def test_configured_tenant_policy_can_restrict_demo_origins(self):
+        with patch.dict("os.environ", {"ISC_TENANT_SUFFIXES": "api.identitynow.com"}):
+            with self.assertRaises(Rejected):
+                tenant_url("https://example.api.identitynow-demo.com")
+
     def test_get_retries_but_post_does_not(self):
         count = []
         def transport(request):
@@ -515,6 +531,32 @@ class WebTests(unittest.TestCase):
         worker.run_one()
         self.assertEqual(self.client.get(f"/api/environments/{e['id']}/runs/{run['id']}").json()["status"], "completed")
         ctx.close()
+
+    def test_demo_environment_save_errors_are_actionable_and_corrected_values_persist(self):
+        from isc_agents.platform.server import Context
+        ctx = Context(self.settings)
+        try:
+            imported = ctx.catalog.install(SPEC, "v2026", "local://synthetic-demo-contract")
+        finally:
+            ctx.close()
+        payload = {"name": "Magellan Lab", "client": "Magellan Lab", "stage": "sandbox", "backend": "isc",
+                   "base_url": "https://example.identitynow-demo.com", "client_id": "synthetic-client-id",
+                   "client_secret": "synthetic-client-secret", "spec_id": imported["id"]}
+        invalid = self.client.post("/api/environments", headers=self.headers, json=payload)
+        self.assertEqual(invalid.status_code, 400)
+        self.assertIn("no spaces", invalid.json()["error"])
+        self.assertEqual(self.client.get("/api/environments").json(), [])
+        payload["client"] = "magellan_lab"
+        invalid = self.client.post("/api/environments", headers=self.headers, json=payload)
+        self.assertEqual(invalid.status_code, 400)
+        self.assertIn("https://example.api.identitynow-demo.com", invalid.json()["error"])
+        payload["base_url"] = "https://example.api.identitynow-demo.com"
+        saved = self.client.post("/api/environments", headers=self.headers, json=payload)
+        self.assertEqual(saved.status_code, 200, saved.text)
+        rows = self.client.get("/api/environments").json()
+        self.assertEqual(rows[0]["id"], saved.json()["id"])
+        self.assertEqual(rows[0]["base_url"], payload["base_url"])
+        self.assertNotIn("synthetic-client-secret", canonical(rows))
 
     def test_user_cannot_access_ungranted_environment(self):
         e = self.client.post("/api/environments", headers=self.headers, json={"name": "Private", "client": "private", "stage": "sandbox", "backend": "simulator"}).json()

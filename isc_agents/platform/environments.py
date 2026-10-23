@@ -32,8 +32,10 @@ class Environments:
                  "connector_secrets", "spec_id", "write_enabled", "allowed_write_operations"}
         if set(config) - known:
             raise Rejected("Unknown environment fields")
-        if not isinstance(config.get("name"), str) or not 1 <= len(config["name"]) <= 200 or not isinstance(config.get("client"), str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", config["client"]):
-            raise Rejected("Environment name and valid client identifier are required")
+        if not isinstance(config.get("name"), str) or not 1 <= len(config["name"]) <= 200:
+            raise Rejected("Environment name is required and must contain at most 200 characters")
+        if not isinstance(config.get("client"), str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", config["client"]):
+            raise Rejected("Client identifier must start with a letter and contain only letters, digits, underscores or hyphens (no spaces). Example: magellan_lab")
         for field in ("stage", "backend", "base_url", "client_id", "client_secret", "spec_id"):
             if field in config and (not isinstance(config[field], str) or len(config[field]) > 8192):
                 raise Rejected("Environment fields must contain bounded text values")

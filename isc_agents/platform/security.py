@@ -100,12 +100,17 @@ def tenant_url(value):
         port = parsed.port
     except (ValueError, TypeError):
         raise Rejected("Invalid tenant URL") from None
-    suffixes = tuple(os.environ.get("ISC_TENANT_SUFFIXES", "api.identitynow.com").split(","))
+    suffixes = tuple(os.environ.get("ISC_TENANT_SUFFIXES", "api.identitynow.com,api.identitynow-demo.com").split(","))
     if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
             or port or parsed.query or parsed.fragment or parsed.path not in {"", "/"}
             or not any(parsed.hostname.endswith("." + s.strip()) for s in suffixes)
             or not re.fullmatch(r"[a-z0-9.-]+", parsed.hostname)):
-        raise Rejected("Base URL must be an approved HTTPS ISC tenant origin without a path or port")
+        if (parsed.scheme == "https" and parsed.hostname and not parsed.username and not parsed.password
+                and not port and not parsed.query and not parsed.fragment and parsed.path in {"", "/"}):
+            ui_host = re.fullmatch(r"([a-z0-9-]+)\.(identitynow(?:-demo)?\.com)", parsed.hostname)
+            if ui_host:
+                raise Rejected(f"This is the SailPoint web URL. Use the API base URL: https://{ui_host[1]}.api.{ui_host[2]}")
+        raise Rejected("Base URL must be an approved HTTPS ISC API origin without a path or port, such as https://tenant.api.identitynow.com or https://tenant.api.identitynow-demo.com")
     return "https://" + parsed.hostname
 
 

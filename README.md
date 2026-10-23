@@ -50,7 +50,10 @@ operation allowlist. Credentials are encrypted and write-only. Blank client ID/s
 fields retain stored values. Named connector secrets are replaced only when submitted;
 `{}` clears them. Use a least-privilege ISC API client.
 
-The default tenant origin is `https://TENANT.api.identitynow.com`. Other approved
+Supported default tenant origins are `https://TENANT.api.identitynow.com` and
+`https://TENANT.api.identitynow-demo.com`. Use the API hostname containing `.api.`,
+not the SailPoint web UI hostname. The internal client identifier cannot contain
+spaces (for example `magellan_lab`); it is separate from the OAuth Client ID. Other approved
 suffixes require explicit server configuration through `ISC_TENANT_SUFFIXES`.
 Client-credential OAuth uses the selected origin's `/oauth/token`. Tokens stay in
 server memory and are not returned to agents. Discovery reads a bounded first page
