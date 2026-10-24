@@ -29,6 +29,19 @@ official v2026 API contract. A fresh checkout starts without environments. For a
 offline demonstration, create a Simulator environment, submit the sample requirements,
 inspect the plan, approve it, then execute it. Simulated changes never reach ISC.
 
+## Choose the right task
+
+In Workspace, choose **Find an identity** for a profile lookup, **Ask about documentation**
+for a cited answer, or **Plan an integration or change** for engineering workflows.
+Automatic mode recognizes common lookup and explanation prompts. Editable examples
+help you start with suitable inputs.
+
+`Retrieve information about Youssef Aghzere` now searches identities in the selected
+live tenant and returns a profile or matching candidates. It uses **zero LLM calls**;
+Qwen does not need to be running for this lookup. Documentation questions use one
+model call against indexed evidence. Integration work retains reviewed planning and
+approval. See [request modes and limits](docs/request-modes.md).
+
 ## Configure real agents and environments
 
 Open **Models & appearance** after signing in. Create a model profile, save it,
@@ -79,7 +92,7 @@ Optional server-level defaults and research settings:
 
 Restart only after changing server environment variables. Saved UI profiles take
 precedence over server defaults. Without a model, simulation and manually authored
-live workflows remain available. There is no automatic paid-provider fallback.
+live workflows and identity profile lookups remain available. There is no automatic paid-provider fallback.
 
 **Appearance:** choose Light, Dark or System in the header or Models & appearance.
 The blue/navy palette is inspired by Magellan Group. The choice persists in this

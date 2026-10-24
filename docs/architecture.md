@@ -93,3 +93,13 @@ provisioning. The quality of expected-value assertions remains an engineering co
    isolated generated-code testing/deployment for concrete use cases.
 
 These operational and business validations cannot be inferred from local contract tests.
+
+## Request routing and answer paths
+
+`platform/requests.py` separates bounded identity profile reads from integration plans.
+Conservative routing or the explicit UI task chooses identity lookup, documentation
+answer, or integration. Identity lookups use no model and only pinned GET contracts;
+ambiguous matches require candidate selection. Documentation answers use indexed,
+scoped evidence and one validated model response. Answers use a separate encrypted,
+environment-scoped table and API; they do not become approvable workflow plans.
+See [request modes](request-modes.md) for scope, performance, and limitations.

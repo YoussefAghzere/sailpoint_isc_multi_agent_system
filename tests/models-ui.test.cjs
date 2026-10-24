@@ -8,7 +8,7 @@ const root=path.join(__dirname,'../isc_agents/platform/static');
 const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
 const source=fs.readFileSync(path.join(root,'app.js'),'utf8');
 
-async function browser(live=false){
+async function browser(live=false,fixture={}){
   const elements=new Map(),requests=[],profileData={profiles:[],selected_id:'',server_default:null};
   for(const match of html.matchAll(/<[^>]+\bid="([^"]+)"[^>]*>/g)){
     const tag=match[0],classes=new Set();
@@ -27,7 +27,9 @@ async function browser(live=false){
     else if(url==='/api/model-profiles'&&options.method==='POST'){
       const {api_key,...publicFields}=body;value={id:'local-profile',...publicFields,revision:'model-revision',has_api_key:false};profileData.profiles=[value];
     }else if(url==='/api/model-selection'){profileData.selected_id=body.profile_id;value={selected_model:profileData.profiles[0]};}
-    else if(url==='/api/environments/sandbox/plan')value={job_id:'local-plan-job'};
+    else if(url==='/api/environments/sandbox/plan')value={job_id:'local-plan-job',task:fixture.lookupCompleted?'identity_lookup':'plan'};
+    else if(url==='/api/jobs'&&fixture.lookupCompleted)value=[{id:'local-plan-job',environment_id:'sandbox',state:'completed',result:{answer_id:'answer-1'}}];
+    else if(url==='/api/environments/sandbox/answers/answer-1')value={kind:'identity_lookup',status:'answered',identity:{name:'<img src=x>',email:'jane@example.com'},model_calls:0,duration_seconds:0.1,evidence:[]};
     return {ok:true,status:200,json:async()=>JSON.parse(JSON.stringify(value))};
   };
   const context=vm.createContext({document:{getElementById:id=>elements.get(id),querySelectorAll:()=>[],hidden:false},fetch,console,
@@ -66,4 +68,38 @@ test('a live request without a model guides the user to model setup without queu
   await b.event('plan-form','submit');
   assert.equal(vm.runInContext('state.tab',b.context),'models');
   assert.equal(b.requests.some(r=>r.url==='/api/environments/sandbox/plan'),false);
+});
+
+
+test('an identity request works without configuring any LLM',async()=>{
+  const b=await browser(true);b.elements.get('prompt').value='Retrieve information about Jane Doe';
+  await b.event('plan-form','submit');
+  const queued=b.requests.find(r=>r.url==='/api/environments/sandbox/plan');
+  assert.ok(queued);assert.equal(queued.body.task,'auto');
+  assert.notEqual(vm.runInContext('state.tab',b.context),'models');
+});
+
+test('examples select the right task and provide editable inputs',async()=>{
+  const b=await browser(true);b.elements.get('task-example').value='identity';
+  await b.event('task-example','change');
+  assert.equal(b.elements.get('request-task').value,'identity_lookup');
+  assert.equal(b.elements.get('identity-query').value,'Jane Doe');
+  assert.equal(b.elements.get('identity-query-field').hidden,false);
+  await b.event('plan-form','submit');
+  const queued=b.requests.find(r=>r.url==='/api/environments/sandbox/plan');
+  assert.equal(queued.body.identity_query,'Jane Doe');
+  b.elements.get('task-example').value='documentation';await b.event('task-example','change');
+  assert.equal(b.elements.get('request-task').value,'explanation');
+  assert.equal(b.elements.get('identity-query-field').hidden,true);
+});
+
+
+test('a completed identity lookup renders an escaped answer without approval controls',async()=>{
+  const b=await browser(true,{lookupCompleted:true});
+  b.elements.get('prompt').value='Retrieve information about Jane Doe';
+  await b.event('plan-form','submit');
+  const result=b.elements.get('answer-detail').innerHTML;
+  assert.match(result,/jane@example.com/);assert.match(result,/0 model calls/);
+  assert.match(result,/&lt;img src=x&gt;/);assert.doesNotMatch(result,/<img/);
+  assert.doesNotMatch(result,/Approve exact plan/);
 });

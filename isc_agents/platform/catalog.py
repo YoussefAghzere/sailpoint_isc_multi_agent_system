@@ -32,6 +32,8 @@ def convert_schema(value):
 class Catalog:
     def __init__(self, db):
         self.db = db
+        self._documents = {}
+        self._operation_index = {}
 
     def sync_latest(self, http):
         workflow = http.require_ok(http.request("GET", OFFICIAL_ROOT + ".github/workflows/build-dereferenced-spec.yml"))
@@ -77,10 +79,18 @@ class Catalog:
         return self.db.all("SELECT id,version,hash,origin,fetched FROM specs ORDER BY fetched DESC")
 
     def get(self, spec_id):
-        row = self.db.one("SELECT * FROM specs WHERE id=?", (spec_id,))
+        row = self.db.one("SELECT id,version,hash,origin,fetched FROM specs WHERE id=?", (spec_id,))
         if not row:
             raise Rejected("Import and select an API specification first")
-        row["document"] = json.loads(row["document"])
+        if spec_id not in self._documents:
+            raw = self.db.one("SELECT document FROM specs WHERE id=?", (spec_id,))
+            self._documents[spec_id] = json.loads(raw["document"])
+            # Bound memory in long-lived ingestion workers.
+            if len(self._documents) > 3:
+                oldest = next(iter(self._documents))
+                self._documents.pop(oldest)
+                self._operation_index.pop(oldest, None)
+        row["document"] = self._documents[spec_id]
         return row
 
     @staticmethod
@@ -131,13 +141,17 @@ class Catalog:
     def operation(self, spec_id, operation_id):
         row = self.get(spec_id)
         spec = row["document"]
-        for path, item in spec["paths"].items():
-            for method, op in item.items():
-                if method in METHODS and op.get("operationId") == operation_id:
-                    return {"path": path, "method": method.upper(), "contract": op,
-                            "parameters": item.get("parameters", []) + op.get("parameters", []),
-                            "version": row["version"], "document": spec}
-        raise Rejected("Operation is absent from the pinned specification")
+        if spec_id not in self._operation_index:
+            self._operation_index[spec_id] = {op["operationId"]: (path, method, op, item.get("parameters", []))
+                for path, item in spec["paths"].items() for method, op in item.items()
+                if method in METHODS and op.get("operationId")}
+        found = self._operation_index[spec_id].get(operation_id)
+        if not found:
+            raise Rejected("Operation is absent from the pinned specification")
+        path, method, op, parameters = found
+        return {"path": path, "method": method.upper(), "contract": op,
+                "parameters": parameters + op.get("parameters", []),
+                "version": row["version"], "document": spec}
 
     def describe(self, spec_id, operation_id):
         op = self.operation(spec_id, operation_id)

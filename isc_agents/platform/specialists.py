@@ -3,6 +3,7 @@ import ast
 import json
 import os
 import re
+import time
 import uuid
 from dataclasses import dataclass
 
@@ -29,6 +30,10 @@ within them. Never invent endpoints or permissions, request secrets in chat, cla
 or treat a community workaround as authorization. The server performs all authorization.
 Use the selected environment's pinned OpenAPI catalog and current official evidence. External research
 is permitted only when enabled. Client decisions and connector prerequisites must be explicit.
+Stay within the user's requested task. Identity profile lookup is unrelated to role mining:
+never introduce role-mining sessions, potential roles, or export jobs unless requested.
+Discover technical IDs through relevant read tools before asking users for them. Ask only
+for business decisions, ambiguous matches, or prerequisites that tools cannot establish.
 Available actions and argument forms:
 research: {kind: local|web|fetch, query?: string, url?: string}
 catalog: {query?: string, operation_id?: string}; inspect full operation schemas before using an API.
@@ -169,6 +174,7 @@ class Orchestrator:
             self.budget.input_characters += characters
             if characters > min(limit, 100000) or self.budget.input_characters > self.max_calls * min(limit, 100000):
                 raise Rejected("Shared model input budget exhausted; narrow the task")
+            started = time.monotonic()
             action = self.model.generate(role, model_input)
             try:
                 args = json.loads(action["arguments"])
@@ -176,7 +182,8 @@ class Orchestrator:
                 raise Rejected("Agent arguments are not valid JSON") from None
             if not isinstance(args, dict):
                 raise Rejected("Agent arguments must be a JSON object")
-            event = {"role": role, "action": action["action"], "summary": action["summary"][:400]}
+            event = {"role": role, "action": action["action"], "summary": action["summary"][:400],
+                     "model_seconds": round(time.monotonic() - started, 3), "model_calls": self.budget.calls}
             self.trace.append(event)
             self.heartbeat(event)
             if action["action"] in {"finish", "ask"}:

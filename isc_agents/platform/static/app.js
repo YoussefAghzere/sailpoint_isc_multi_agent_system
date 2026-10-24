@@ -1,6 +1,6 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const state = {csrf: '', me: null, envs: [], specs: [], eid: '', editing: '', run: null, selectedRun: '', jobs: [], tab: 'workspace', pendingPlan: '', audit: [], modelData: {profiles:[],selected_id:'',server_default:null}, editingModel:'', testingModels:new Set()};
+const state = {csrf: '', me: null, envs: [], specs: [], eid: '', editing: '', run: null, selectedRun: '', jobs: [], tab: 'workspace', pendingPlan: '', selectedAnswer:'', audit: [], modelData: {profiles:[],selected_id:'',server_default:null}, editingModel:'', testingModels:new Set()};
 const sample = {source_name:'Example HR',connector:'delimited-file',authoritative:true,account_id:'employeeId',correlation_attribute:'employeeId',attributes:['employeeId','firstName','lastName','email','department','status'],mappings:[{source:'employeeId',identity:'employeeNumber'},{source:'email',identity:'email'},{source:'department',identity:'department'},{source:'status',identity:'employmentStatus'}]};
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const pretty = value => JSON.stringify(value, null, 2);
@@ -23,7 +23,7 @@ function switchTab(tab){state.tab=tab;document.querySelectorAll('.tab').forEach(
 document.querySelectorAll('.nav').forEach(button=>button.addEventListener('click',()=>switchTab(button.dataset.tab)));
 
 on('login-form','submit',async()=>{try{const login=await api('/login','POST',{username:$('username').value,password:$('password').value});state.csrf=login.csrf;$('password').value='';$('login-error').textContent='';await boot();}catch(e){$('login-error').textContent=e.message;}});
-on('logout','click',async()=>{await api('/logout','POST',{});state.me=null;state.csrf='';state.selectedRun='';state.run=null;state.pendingPlan='';$('app').hidden=true;$('login-screen').hidden=false;});
+on('logout','click',async()=>{await api('/logout','POST',{});state.me=null;state.csrf='';state.selectedRun='';state.run=null;state.pendingPlan='';state.selectedAnswer='';$('answer-detail').innerHTML='';$('app').hidden=true;$('login-screen').hidden=false;});
 
 async function boot(){state.me=await api('/me');state.csrf=state.me.csrf;$('user-badge').textContent=state.me.user.id.slice(0,2).toUpperCase();$('user-badge').title=state.me.user.id+' · '+state.me.user.role;$('app').hidden=false;$('login-screen').hidden=true;$('metric-model').textContent=state.me.model_configured?state.me.model:'Manual / offline mode';state.eid=sessionStorage.getItem('isc-environment')||'';await refresh();}
 function renderEnvironments(){
@@ -32,14 +32,15 @@ function renderEnvironments(){
   const current=env();$('environment-badge').className='badge '+(current?.stage||'');$('environment-badge').textContent=current?`${current.stage} · ${current.backend==='isc'?'live':'simulation'}`:'No environment';
   $('metric-env').textContent=current?.name||'Not selected';$('metric-tenant').textContent=current?.base_url||'Local simulated tenant';$('metric-policy').textContent=current?.backend==='isc'?(current.write_enabled?'Approved allowlisted writes':'Read-only tenant'):'Simulated execution';
   $('plan-hint').textContent=!current?'Choose an environment to begin.':current.backend==='simulator'?'Offline simulation · explicit source requirements':state.me.model_configured?'Agent planning · no writes before approval':'Choose a local or cloud model in Models & appearance';
-  $('plan-button').disabled=!current||state.me.user.role==='reviewer';$('discover').disabled=current?.backend!=='isc';
+  $('plan-button').disabled=!current;$('discover').disabled=current?.backend!=='isc';
   $('environment-cards').innerHTML=state.envs.length?state.envs.map(e=>`<article class="environment-card ${e.id===state.eid?'active':''}"><strong>${esc(e.name)}</strong> ${badge(e.stage)}<p>${esc(e.client)} · ${esc(e.backend)}<br>${esc(e.base_url||'Local simulator')}</p><p>${e.has_credentials?'Encrypted credentials configured':'No live credentials'} · ${e.write_enabled?'Approved writes enabled':'Read-only policy'}</p><button class="text-button" data-env-edit="${esc(e.id)}">Edit environment →</button></article>`).join(''):'<p class="empty">Create your first environment.</p>';
   document.querySelectorAll('[data-env-edit]').forEach(b=>b.addEventListener('click',()=>editEnvironment(b.dataset.envEdit)));
+  requestHelp();
   const currentSpec=$('env-spec').value;
   $('env-spec').innerHTML='<option value="">Select imported specification</option>'+state.specs.map(s=>`<option value="${esc(s.id)}">${esc(s.version)} · ${esc(s.hash.slice(0,10))} · ${esc(stamp(s.fetched))}</option>`).join('');
   if(state.specs.some(s=>s.id===currentSpec))$('env-spec').value=currentSpec;
 }
-on('environment-select','change',async()=>{state.eid=$('environment-select').value;sessionStorage.setItem('isc-environment',state.eid);state.selectedRun='';state.run=null;renderEmptyRun();setStructuredDefault();await refresh();});
+on('environment-select','change',async()=>{state.eid=$('environment-select').value;sessionStorage.setItem('isc-environment',state.eid);state.selectedRun='';state.run=null;state.pendingPlan='';state.selectedAnswer='';$('answer-detail').innerHTML='';renderEmptyRun();setStructuredDefault();await refresh();});
 function setStructuredDefault(){if(env()?.backend==='simulator'){$('structured').value=pretty(sample);$('requirements-details').open=true;$('prompt').value='Simulate an authoritative delimited-file HR source configuration.';}else{$('structured').value='';$('requirements-details').open=false;$('prompt').value='';}}
 function editEnvironment(eid=''){state.editing=eid;const e=state.envs.find(x=>x.id===eid);$('env-form-title').textContent=e?'Edit environment':'Create environment';$('env-name').value=e?.name||'';$('env-client').value=e?.client||'';$('env-stage').value=e?.stage||'sandbox';$('env-backend').value=e?.backend||'simulator';$('env-base-url').value=e?.base_url||'';$('env-spec').value=e?.spec_id||state.specs[0]?.id||'';$('env-writes').checked=e?.write_enabled||false;$('env-operations').value=(e?.allowed_write_operations||[]).join('\n');for(const id of ['env-client-id','env-client-secret','env-connector-secrets'])$(id).value='';$('credential-hint').textContent=e?.has_credentials?'Credentials already configured. Leave credential fields empty to retain them.':'Secrets are encrypted and never returned to the browser or model.';}
 on('new-environment','click',()=>editEnvironment());
@@ -52,7 +53,31 @@ on('environment-form','submit',async()=>{
   const saved=await api('/environments'+(state.editing?'/'+state.editing:''),state.editing?'PUT':'POST',payload);state.eid=saved.id;sessionStorage.setItem('isc-environment',state.eid);await refresh();editEnvironment(saved.id);setStructuredDefault();environmentStatus('Environment saved successfully.');toast('Environment saved. Earlier plans retain their old revision.');
 });
 on('user-form','submit',async()=>{const e=requireEnv();await api('/users','POST',{username:$('new-user-name').value,password:$('new-user-password').value,role:$('new-user-role').value,environments:[e.id]});$('new-user-password').value='';$('user-form').reset();toast('User created for '+e.name);});
-on('plan-form','submit',async()=>{const e=requireEnv();const structured=$('structured').value.trim()?JSON.parse($('structured').value):null;if(e.backend==='isc'&&!structured&&!state.me.model_configured){switchTab('models');toast('Add a local llama.cpp profile or choose a cloud model to enable agent planning.');return;}const payload={prompt:$('prompt').value,external:$('external').checked,model_profile_id:state.modelData.selected_id||''};if(e.backend==='simulator')payload.requirements=structured||sample;else if(structured)payload.proposal=structured;const result=await api(`/environments/${e.id}/plan`,'POST',payload);state.pendingPlan=result.job_id;toast('Planning job queued. Follow its progress in Background activity.');await refresh();});
+function requestMode(){return $('request-task').value||'auto';}
+function likelyLookup(prompt){return /^(?:(?:retrieve|get|show|find|look up|lookup)\s+(?:information|info|details|a summary)\s+(?:about|for|on)\s+|(?:find|show|lookup|look up|get)\s+(?:the\s+)?(?:identity|person|user)\s+|who is\s+)/i.test(prompt.trim().replace(/^please\s+/i,''));}
+function requestHelp(){
+  const task=requestMode();$('identity-query-field').hidden=task!=='identity_lookup';
+  $('plan-hint').textContent=!env()?'Choose an environment to begin.':env().backend==='simulator'?'Offline simulation · explicit source requirements':state.me?.model_configured?'Agent planning · no writes before approval':'Choose a local or cloud model in Models & appearance';
+  if(env()?.backend==='isc'&&(task==='identity_lookup'||(task==='auto'&&likelyLookup($('prompt').value))))$('plan-hint').textContent='Read-only identity profile · no model needed';
+  else if(task==='explanation')$('plan-hint').textContent='Indexed documentation · one model call';
+  $('request-help').textContent=task==='identity_lookup'?'Search exact names, aliases, emails, or identity IDs. Multiple matches require your selection. No LLM, account, entitlement, or role-mining requests.':task==='explanation'?'Answer from indexed documentation in one model call. Ingest relevant pages under Knowledge & research first; this mode does not browse the web.':task==='integration'?'Describe the connector, ownership, business rules, and expected outcome. Agents research and propose a plan for review.':'Automatic routing recognizes simple identity lookups and documentation questions. Choose a task explicitly for ambiguous requests.';
+}
+on('request-task','change',requestHelp);
+on('prompt','input',requestHelp);
+on('task-example','change',()=>{
+  const examples={identity:{task:'identity_lookup',prompt:'Retrieve information about Jane Doe',query:'Jane Doe'},documentation:{task:'explanation',prompt:'Explain how account correlation works in SailPoint ISC.'},connector:{task:'integration',prompt:'Plan a delimited-file HR source integration. Employee ID is the account identifier and correlation key. Include schema, ownership, prerequisites, and verification; ask for missing business decisions.'}};
+  const example=examples[$('task-example').value];if(!example)return;
+  $('request-task').value=example.task;$('prompt').value=example.prompt;$('identity-query').value=example.query||'';requestHelp();
+});
+on('plan-form','submit',async()=>{
+  const e=requireEnv(),structured=$('structured').value.trim()?JSON.parse($('structured').value):null;
+  const task=requestMode(),lookup=task==='identity_lookup'||(task==='auto'&&likelyLookup($('prompt').value));
+  if(e.backend==='isc'&&!structured&&!lookup&&!state.me.model_configured){switchTab('models');toast('Add a local llama.cpp profile or choose a cloud model to enable agent planning.');return;}
+  const payload={prompt:$('prompt').value,external:$('external').checked,model_profile_id:state.modelData.selected_id||'',task,identity_query:task==='identity_lookup'?$('identity-query').value:''};
+  if(e.backend==='simulator')payload.requirements=structured||sample;else if(structured)payload.proposal=structured;
+  const result=await api(`/environments/${e.id}/plan`,'POST',payload);state.pendingPlan=result.job_id;
+  toast(result.task==='identity_lookup'?'Identity lookup queued · no model calls.':result.task==='explanation'?'Documentation answer queued.':'Planning job queued. Follow its progress in Background activity.');await refresh();
+});
 on('discover','click',async()=>{const e=requireEnv();await api(`/environments/${e.id}/discover`,'POST',{});toast('Read-only discovery queued.');await refresh();});
 on('csv-upload','change',async()=>{const e=requireEnv(),file=$('csv-upload').files[0];if(!file)return;if(file.size>5000000)throw new Error('CSV exceeds the 5 MB limit');const bytes=new Uint8Array(await file.arrayBuffer());let text='';for(let i=0;i<bytes.length;i+=16384)text+=String.fromCharCode(...bytes.subarray(i,i+16384));await api(`/environments/${e.id}/attachments`,'POST',{name:file.name,base64:btoa(text)});$('csv-upload').value='';toast('CSV encrypted and attached to '+e.name);await refresh();});
 on('refresh','click',refresh);
@@ -75,15 +100,20 @@ on('client-doc-form','submit',async()=>{const e=requireEnv();await api(`/environ
 on('catalog-form','submit',async()=>{const e=requireEnv();$('catalog-results').textContent=pretty(await api(`/environments/${e.id}/operations?query=`+encodeURIComponent($('catalog-query').value)));});
 on('export-audit','click',()=>download('audit-'+requireEnv().id+'.json',pretty(state.audit)));
 
+let refreshing=false;
 async function refresh(){
-  if(!state.me)return;
+  if(!state.me||refreshing)return;
+  refreshing=true;
+  try {
   const [envs,specs,jobs,models]=await Promise.all([api('/environments'),api('/specs'),api('/jobs'),api('/model-profiles')]);state.envs=envs;state.specs=specs;state.jobs=jobs;state.modelData=models;renderModels();const wasEmpty=!state.eid;renderEnvironments();if(wasEmpty&&state.eid)setStructuredDefault();
   $('jobs').innerHTML=table(['JOB','STATE','UPDATED','RESULT / PROGRESS'],jobs.slice(0,12).map(j=>[esc(j.kind),badge(j.state),esc(stamp(j.updated)),esc(j.error||pretty(j.result?.progress||j.result||{}))+(j.result?.activity?.length?`<details><summary>Agent activity (${j.result.activity.length})</summary><pre>${esc(pretty(j.result.activity))}</pre></details>`:'')]));
   $('specs').innerHTML=table(['VERSION','CONTENT HASH','IMPORTED','ORIGIN'],specs.map(s=>[esc(s.version),esc(s.hash.slice(0,16)),esc(stamp(s.fetched)),`<a href="${esc(s.origin)}" target="_blank" rel="noopener noreferrer">Official specification ↗</a>`]));
-  if(!state.eid){$('runs').innerHTML='<p class="empty">Create an environment to begin.</p>';return;}
+  if(!state.eid){$('answers').innerHTML='';$('answer-detail').innerHTML='';$('runs').innerHTML='<p class="empty">Create an environment to begin.</p>';return;}
   const eid=state.eid;
-  const [runs,attachments]=await Promise.all([api(`/environments/${eid}/runs`),api(`/environments/${eid}/attachments`)]);if(state.eid!==eid)return;
-  const pending=jobs.find(j=>j.id===state.pendingPlan);if(pending?.state==='completed'&&pending.result?.run_id){state.selectedRun=pending.result.run_id;state.pendingPlan='';}else if(pending?.state==='failed'){toast(pending.error||'Planning failed',true);state.pendingPlan='';}
+  const [runs,attachments,answers]=await Promise.all([api(`/environments/${eid}/runs`),api(`/environments/${eid}/attachments`),api(`/environments/${eid}/answers`)]);if(state.eid!==eid)return;
+  const pending=jobs.find(j=>j.id===state.pendingPlan&&j.environment_id===eid);if(pending?.state==='completed'&&pending.result?.run_id){state.selectedRun=pending.result.run_id;state.pendingPlan='';}else if(pending?.state==='completed'&&pending.result?.answer_id){state.selectedAnswer=pending.result.answer_id;state.pendingPlan='';}else if(pending?.state==='failed'){toast(pending.error||'Planning failed',true);state.pendingPlan='';}
+  renderAnswers(answers,eid);
+  if(state.selectedAnswer)await loadAnswer(state.selectedAnswer,eid);
   $('runs').innerHTML=runs.length?runs.map(r=>`<button class="run-item ${r.id===state.selectedRun?'active':''}" data-run="${esc(r.id)}">${badge(r.status)}<strong>${esc(r.id.slice(0,16))}</strong><p>${esc(r.creator)} · ${esc(stamp(r.created))}</p></button>`).join(''):'<p class="empty">Your integration plans will appear here.</p>';
   document.querySelectorAll('[data-run]').forEach(b=>b.addEventListener('click',()=>{state.selectedRun=b.dataset.run;loadRun(state.selectedRun).catch(e=>toast(e.message,true));}));
   $('attachments').textContent=attachments.map(a=>`${a.name} · ${a.size.toLocaleString()} bytes · ${a.id}`).join(' | ');
@@ -96,6 +126,17 @@ async function refresh(){
     document.querySelectorAll('[data-download-draft]').forEach(b=>b.addEventListener('click',()=>{const d=drafts.find(x=>x.id===b.dataset.downloadDraft);download(d.name,d.content,'text/plain');}));
   }
   if(state.tab==='audit'){state.audit=await api(`/environments/${eid}/audit`);$('audit').innerHTML=table(['TIME','ACTOR','EVENT','DETAILS'],state.audit.map(e=>[esc(stamp(e.at)),esc(e.actor),esc(e.kind),esc(pretty(e.details))]));}
+  } finally {refreshing=false;}
+}
+function renderAnswers(answers,eid){
+  $('answers').innerHTML=answers.map(a=>`<button class="secondary" data-answer="${esc(a.id)}">${esc(a.kind==='identity_lookup'?'Identity lookup':'Documentation')} · ${esc(stamp(a.created))}</button>`).join('');
+  document.querySelectorAll('[data-answer]').forEach(b=>b.addEventListener('click',()=>{state.selectedAnswer=b.dataset.answer;loadAnswer(state.selectedAnswer,eid).catch(e=>toast(e.message,true));}));
+}
+async function loadAnswer(aid,eid){
+  const answer=await api(`/environments/${eid}/answers/${aid}`);if(eid!==state.eid||aid!==state.selectedAnswer)return;
+  const fields=answer.identity||{};
+  $('answer-detail').innerHTML=`<div class="card-heading"><h3>${esc(answer.kind==='identity_lookup'?'Identity profile':'Documentation answer')}</h3>${badge(answer.status)}</div><p>${esc(answer.message||'')}</p>${answer.answer?`<p class="answer-text">${esc(answer.answer)}</p>`:''}${Object.keys(fields).length?table(['FIELD','VALUE'],Object.entries(fields).map(([k,v])=>[esc(k),esc(typeof v==='object'?pretty(v):v)])):''}${answer.candidates?.length?table(['NAME','EMAIL','IDENTITY ID','SELECT'],answer.candidates.map(c=>[esc([c.firstname,c.lastname].filter(Boolean).join(' ')||c.name),esc(c.email),esc(c.id),`<button class="secondary" data-identity-choice="${esc(c.id)}">Use this identity</button>`])):''}${answer.truncated?'<p class="notice">Only the first 20 candidates are shown. Refine with an email or identity ID.</p>':''}<p class="fine">${esc(answer.scope||answer.note||'')} · ${esc(answer.model_calls)} model calls · ${esc(answer.duration_seconds)} seconds</p><details><summary>API / documentation evidence</summary><pre>${esc(pretty(answer.evidence||[]))}</pre></details>`;
+  document.querySelectorAll('[data-identity-choice]').forEach(b=>b.addEventListener('click',async()=>{try{const result=await api(`/environments/${eid}/answers/${aid}/select`,'POST',{identity_id:b.dataset.identityChoice});state.pendingPlan=result.job_id;toast('Reading the selected identity.');await refresh();}catch(e){toast(e.message,true);}}));
 }
 const providerNames={local:'Local · llama.cpp',openai:'OpenAI',anthropic:'Claude',gemini:'Gemini'};
 function modelStatus(message,error=false){$('model-status').textContent=message;$('model-status').hidden=!message;$('model-status').classList.toggle('error',error);}
@@ -144,4 +185,5 @@ on('model-form','submit',async()=>{
 });
 modelProviderFields();
 boot().catch(()=>{});
-setInterval(()=>{if(state.me&&!document.hidden)refresh().catch(e=>toast(e.message,true));},6000);
+let pollTicks=0;
+setInterval(()=>{if(state.me&&!document.hidden&&(state.pendingPlan||++pollTicks>=6)){pollTicks=0;refresh().catch(e=>toast(e.message,true));}},1000);

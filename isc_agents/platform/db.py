@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS drafts(id TEXT PRIMARY KEY,environment_id TEXT,name T
 CREATE TABLE IF NOT EXISTS audit(seq INTEGER PRIMARY KEY AUTOINCREMENT,at REAL,actor TEXT,
  environment_id TEXT,kind TEXT,details TEXT,previous TEXT,hash TEXT);
 CREATE TABLE IF NOT EXISTS budgets(environment_id TEXT PRIMARY KEY,window REAL,requests INTEGER);
+CREATE TABLE IF NOT EXISTS answers(id TEXT PRIMARY KEY,environment_id TEXT,creator TEXT,kind TEXT,revision TEXT,content TEXT,created REAL);
+CREATE INDEX IF NOT EXISTS answers_environment ON answers(environment_id,created);
 CREATE TABLE IF NOT EXISTS model_profiles(id TEXT PRIMARY KEY,owner TEXT,name TEXT,config TEXT,secret TEXT,revision TEXT,created REAL,updated REAL);
 CREATE TABLE IF NOT EXISTS model_preferences(user_id TEXT PRIMARY KEY,profile_id TEXT);
 """
