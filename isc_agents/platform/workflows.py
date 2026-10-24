@@ -160,15 +160,18 @@ class Workflows:
                     guard_args = {"path": args.get("path", {})}
                     baseline = isc.call(read, guard_args)
                     compiled["guard"] = {"operation_id": read, "arguments": guard_args, "hash": baseline["state_hash"]}
-                if step["operation_id"] == "createSource":
+                if re.fullmatch(r"createSource(?:V\d+)?", step["operation_id"]):
                     name = args.get("body", {}).get("name")
                     if not isinstance(name, str) or any(c in name for c in '\\"\r\n'):
                         raise Rejected("Source creation requires a plain source name for duplicate detection")
                     guard_args = {"query": {"filters": 'name eq "' + name + '"', "limit": 2}}
-                    existing = isc.call("listSources", guard_args)
+                    read = op["document"]["paths"][op["path"]].get("get", {}).get("operationId")
+                    if not read:
+                        raise Rejected("Source creation requires a collection GET for duplicate detection")
+                    existing = isc.call(read, guard_args)
                     if existing["data"]:
                         raise Rejected("A source with this name already exists; design an update instead")
-                    compiled["guard"] = {"operation_id": "listSources", "arguments": guard_args, "hash": existing["state_hash"]}
+                    compiled["guard"] = {"operation_id": read, "arguments": guard_args, "hash": existing["state_hash"]}
             steps.append(compiled)
             seen.add(step["id"])
         checked = {c["step_id"] for c in proposal["checks"]}
@@ -214,7 +217,7 @@ class Workflows:
         if env["backend"] == "isc" and time.time() - self.catalog.get(env["spec_id"])["fetched"] > 7 * 86400:
             raise Rejected("Pinned API specification is stale; refresh its evidence before execution")
         for evidence in run["plan"].get("evidence", []):
-            if evidence.get("id"):
+            if evidence.get("id") and evidence.get("trust") in {"official", "community", "client", "fixture"}:
                 current = self.db.one("SELECT hash,fetched FROM documents WHERE id=?", (evidence["id"],))
                 if not current or current["hash"] != evidence["hash"] or time.time() - current["fetched"] > 7 * 86400:
                     raise Rejected("Reviewed documentation changed or became stale; generate a new plan")

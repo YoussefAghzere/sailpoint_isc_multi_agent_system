@@ -4,6 +4,7 @@ const state = {csrf: '', me: null, envs: [], specs: [], eid: '', editing: '', ru
 const sample = {source_name:'Example HR',connector:'delimited-file',authoritative:true,account_id:'employeeId',correlation_attribute:'employeeId',attributes:['employeeId','firstName','lastName','email','department','status'],mappings:[{source:'employeeId',identity:'employeeNumber'},{source:'email',identity:'email'},{source:'department',identity:'department'},{source:'status',identity:'employmentStatus'}]};
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const pretty = value => JSON.stringify(value, null, 2);
+const specLabel = s => s.version==='isc'?'ISC API · resource versions':s.version;
 const stamp = at => new Date(at * 1000).toLocaleString();
 const badge = value => `<span class="badge ${esc(value)}">${esc(String(value).replaceAll('_',' '))}</span>`;
 const env = () => state.envs.find(e => e.id === state.eid);
@@ -36,7 +37,7 @@ function renderEnvironments(){
   $('environment-cards').innerHTML=state.envs.length?state.envs.map(e=>`<article class="environment-card ${e.id===state.eid?'active':''}"><strong>${esc(e.name)}</strong> ${badge(e.stage)}<p>${esc(e.client)} · ${esc(e.backend)}<br>${esc(e.base_url||'Local simulator')}</p><p>${e.has_credentials?'Encrypted credentials configured':'No live credentials'} · ${e.write_enabled?'Approved writes enabled':'Read-only policy'}</p><button class="text-button" data-env-edit="${esc(e.id)}">Edit environment →</button></article>`).join(''):'<p class="empty">Create your first environment.</p>';
   document.querySelectorAll('[data-env-edit]').forEach(b=>b.addEventListener('click',()=>editEnvironment(b.dataset.envEdit)));
   const currentSpec=$('env-spec').value;
-  $('env-spec').innerHTML='<option value="">Select imported specification</option>'+state.specs.map(s=>`<option value="${esc(s.id)}">${esc(s.version)} · ${esc(s.hash.slice(0,10))} · ${esc(stamp(s.fetched))}</option>`).join('');
+  $('env-spec').innerHTML='<option value="">Select imported specification</option>'+state.specs.map(s=>`<option value="${esc(s.id)}">${esc(specLabel(s))} · ${esc(s.hash.slice(0,10))} · ${esc(stamp(s.fetched))}</option>`).join('');
   if(state.specs.some(s=>s.id===currentSpec))$('env-spec').value=currentSpec;
 }
 on('environment-select','change',async()=>{state.eid=$('environment-select').value;sessionStorage.setItem('isc-environment',state.eid);state.selectedRun='';state.run=null;state.pendingPlan='';state.selectedAnswer='';$('answer-detail').innerHTML='';renderEmptyRun();setStructuredDefault();await refresh();});
@@ -78,7 +79,7 @@ function renderRun(run,eid){
   on('export-run','click',()=>download('integration-run-'+run.id+'.json',pretty(run)));
   if($('reconcile-run'))on('reconcile-run','click',async()=>{await api(`/environments/${eid}/runs/${run.id}/reconcile`,'POST',JSON.parse($('reconcile-json').value));toast('Reconciliation evidence recorded.');await refresh();});
 }
-on('sync-specs','click',async()=>{await api('/specs/sync','POST',{});toast('Official API release discovery and ingestion queued.');await refresh();});
+on('sync-specs','click',async()=>{await api('/specs/sync','POST',{});toast('Official ISC API catalog sync queued. Select the imported catalog in your environment when ready.');await refresh();});
 on('crawl-form','submit',async()=>{await api('/ingestion','POST',{seeds:$('crawl-seeds').value.split('\n').map(x=>x.trim()).filter(Boolean),max_pages:Number($('crawl-pages').value),daily:$('crawl-daily').checked});toast('Documentation crawl queued. Check Background activity.');switchTab('workspace');});
 on('search-form','submit',async()=>{const e=requireEnv(),results=await api(`/environments/${e.id}/knowledge/search`,'POST',{query:$('search-query').value});$('search-results').innerHTML=results.length?results.map(r=>`<article class="evidence">${badge(r.trust)} <a href="${esc(r.url.startsWith('https://')?r.url:'#')}" target="_blank" rel="noopener noreferrer">${esc(r.title)} ↗</a><p>${esc(r.content)}</p><span class="fine">Fetched ${esc(stamp(r.fetched))} · ${esc(r.hash.slice(0,12))}</span></article>`).join(''):'<p class="empty">No matching evidence. Import documentation or client guidance.</p>';});
 on('research-form','submit',async()=>{const e=requireEnv(),value=$('research-query').value;const result=await api(`/environments/${e.id}/research`,'POST',{external:$('research-consent').checked,...(value.startsWith('https://')?{url:value}:{query:value})});$('research-results').textContent=pretty(result);});
@@ -93,7 +94,7 @@ async function refresh(){
   try {
   const [envs,specs,jobs,models]=await Promise.all([api('/environments'),api('/specs'),api('/jobs'),api('/model-profiles')]);state.envs=envs;state.specs=specs;state.jobs=jobs;state.modelData=models;renderModels();const wasEmpty=!state.eid;renderEnvironments();if(wasEmpty&&state.eid)setStructuredDefault();
   $('jobs').innerHTML=table(['JOB','STATE','UPDATED','RESULT / PROGRESS'],jobs.slice(0,12).map(j=>[esc(j.kind),badge(j.state),esc(stamp(j.updated)),esc(j.error||pretty(j.result?.progress||j.result||{}))+(j.result?.activity?.length?`<details><summary>Agent activity (${j.result.activity.length})</summary><pre>${esc(pretty(j.result.activity))}</pre></details>`:'')]));
-  $('specs').innerHTML=table(['VERSION','CONTENT HASH','IMPORTED','ORIGIN'],specs.map(s=>[esc(s.version),esc(s.hash.slice(0,16)),esc(stamp(s.fetched)),`<a href="${esc(s.origin)}" target="_blank" rel="noopener noreferrer">Official specification ↗</a>`]));
+  $('specs').innerHTML=table(['VERSION','CONTENT HASH','IMPORTED','ORIGIN'],specs.map(s=>[esc(specLabel(s)),esc(s.hash.slice(0,16)),esc(stamp(s.fetched)),`<a href="${esc(s.origin)}" target="_blank" rel="noopener noreferrer">Official specification ↗</a>`]));
   if(!state.eid){$('answers').innerHTML='';$('answer-detail').innerHTML='';$('runs').innerHTML='<p class="empty">Create an environment to begin.</p>';return;}
   const eid=state.eid;
   const [runs,attachments,answers]=await Promise.all([api(`/environments/${eid}/runs`),api(`/environments/${eid}/attachments`),api(`/environments/${eid}/answers`)]);if(state.eid!==eid)return;

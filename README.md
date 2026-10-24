@@ -24,8 +24,7 @@ permissions. Read it locally; never put it in an integration prompt. Alternative
 provision `ISC_BOOTSTRAP_PASSWORD` before the first initialization. It does not reset
 an existing account.
 
-This workspace has a clearly labelled **Demo sandbox** environment and an imported
-official v2026 API contract. A fresh checkout starts without environments. For an
+A fresh checkout starts without environments or imported API catalogs. For an
 offline demonstration, create a Simulator environment, submit the sample requirements,
 inspect the plan, approve it, then execute it. Simulated changes never reach ISC.
 
@@ -152,11 +151,13 @@ See [workflow contracts and recovery](docs/workflows.md).
 
 ## Documentation and internet
 
-- **API ingestion:** discovers the newest published year-versioned bundle in
-  [SailPoint's official repository](https://github.com/sailpoint-oss/api-specs), downloads
-  it, stores a content-hash snapshot and indexes operation documentation. URL, version,
+- **API ingestion:** uses the [official ISC API reference](https://developer.sailpoint.com/docs/api)
+  and imports the unified machine-readable OpenAPI bundle from
+  [SailPoint's official repository](https://github.com/sailpoint-oss/api-specs). It keeps
+  resource-versioned paths intact, stores a content-hash snapshot and indexes operation documentation. URL, version,
   checksum and retrieval time are retained. Environments remain explicitly pinned;
-  refresh does not silently upgrade them. Beta/deprecated operations are disabled.
+  refresh does not silently upgrade them. Deprecated operations are rejected.
+  See [catalog setup and migration](docs/api-catalog.md).
 - **Product docs:** official seed URLs and XML sitemaps; robots rules; same-section
   links; page/response budgets; ETag and Last-Modified; chunking; persistent page
   checkpoints; optional daily refresh. JavaScript-only pages and PDF extraction are

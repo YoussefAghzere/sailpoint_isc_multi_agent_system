@@ -13,6 +13,7 @@ from referencing.jsonschema import DRAFT4
 from ..models import Rejected, canonical, digest
 
 
+API_DOCUMENTATION = "https://developer.sailpoint.com/docs/api"
 OFFICIAL_ROOT = "https://raw.githubusercontent.com/sailpoint-oss/api-specs/main/"
 METHODS = {"get", "post", "put", "patch", "delete"}
 
@@ -36,17 +37,13 @@ class Catalog:
         self._operation_index = {}
 
     def sync_latest(self, http):
-        workflow = http.require_ok(http.request("GET", OFFICIAL_ROOT + ".github/workflows/build-dereferenced-spec.yml"))
-        versions = sorted(set(re.findall(r"sailpoint-api\.(v20\d{2})\.yaml", workflow.text)))
-        if not versions:
-            raise Rejected("Official release discovery returned no stable versioned specifications")
-        version = versions[-1]
-        url = OFFICIAL_ROOT + f"dereferenced/deref-sailpoint-api.{version}.json"
+        """Import the official unified ISC catalog, with paths versioned per resource."""
+        url = OFFICIAL_ROOT + "dereferenced/deref-sailpoint-api.json"
         response = http.require_ok(http.request("GET", url, max_bytes=16_000_000))
-        return self.install(response.json(), version, url)
+        return {**self.install(response.json(), "isc", url), "documentation_url": API_DOCUMENTATION}
 
     def install(self, spec, version, origin):
-        if not re.fullmatch(r"v(?:3|20\d{2}|beta)", version):
+        if version != "isc" and not re.fullmatch(r"v(?:3|20\d{2}|beta)", version):
             raise Rejected("Unrecognized API version")
         if not isinstance(spec, dict) or not str(spec.get("openapi", "")).startswith("3.") or not spec.get("paths"):
             raise Rejected("A complete OpenAPI 3 specification is required")
@@ -242,4 +239,7 @@ class Catalog:
             check(content[media].get("schema", {}), form)
         elif "body" in arguments or arguments.get("form") or arguments.get("files"):
             raise Rejected("Unsupported request content type or unexpected request body")
-        return {**op, "resolved_path": "/" + op["version"] + path, "media": media}
+        # Unified ISC paths already contain the version at the resource level
+        # (e.g. /sources/v1/{id}); legacy snapshots use a global prefix.
+        resolved_path = path if op["version"] == "isc" else "/" + op["version"] + path
+        return {**op, "resolved_path": resolved_path, "media": media}

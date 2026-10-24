@@ -10,7 +10,7 @@ This example reads an existing source. Replace `SOURCE_ID` with an observed iden
   "title": "Verify an existing HR source",
   "questions": [],
   "steps": [
-    {"id": "read_source", "operation_id": "getSource", "arguments": {"path": {"id": "SOURCE_ID"}}}
+    {"id": "read_source", "operation_id": "getSourceV1", "arguments": {"path": {"id": "SOURCE_ID"}}}
   ],
   "checks": [
     {"step_id": "read_source", "pointer": "/name", "equals": "Expected HR source name"}
@@ -18,8 +18,9 @@ This example reads an existing source. Replace `SOURCE_ID` with an observed iden
 }
 ```
 
-The operation ID was observed in v2026, but every plan resolves it against the selected
-contract. Inspect the operation catalog before composing a workflow for another version.
+This example uses the unified ISC catalog’s `getSourceV1` operation. Every plan
+resolves IDs and paths against its selected contract; inspect that catalog instead
+of assuming the names used by a legacy year-versioned bundle.
 
 ## Arguments and references
 
@@ -46,7 +47,7 @@ A read-only step can include a bounded wait condition:
 ```json
 {
   "id": "wait_for_task",
-  "operation_id": "getTaskStatus",
+  "operation_id": "getTaskStatusV1",
   "arguments": {"path": {"id": "${steps.aggregate.task.id}"}},
   "wait": {
     "pointer": "/completionStatus",

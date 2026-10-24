@@ -61,8 +61,9 @@ provisioning. The quality of expected-value assertions remains an engineering co
 
 ## Verified versus unverified
 
-- Verified using the real public repository: release discovery, v2026 download,
-  contract import, and local indexing of 857 documented operations.
+- Verified using SailPoint’s real public repository: unified ISC OpenAPI download
+  and import of 993 operations, with resource-versioned paths preserved. Legacy
+  year-versioned snapshots remain supported for already-pinned environments.
 - Verified with synthetic HTTP transports: OAuth construction, paths, schemas,
   source creation, drift, polling, ambiguous writes, reconciliation, compression,
   multipart forms and CSV quality checks.

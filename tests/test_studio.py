@@ -520,6 +520,14 @@ class StudioTests(unittest.TestCase):
         self.assertEqual(run["status"], "planned")
         self.assertEqual(requests[-1][1]["request"], "Create HR source")
         self.assertEqual(self.tenant.mutations, 0)
+        # Tool observations are evidence too, but are not document IDs. They must
+        # not invalidate an otherwise fresh reviewed plan during execution.
+        self.workflows.approve(run["id"], self.env["id"], run["hash"], "admin")
+        for _ in range(5):
+            outcome = self.workflows.tick(run["id"], self.env["id"])
+            if outcome["done"]:
+                break
+        self.assertEqual(self.workflows.get(run["id"], self.env["id"])["status"], "completed")
 
     def test_specialist_cannot_register_tools_or_expand_permissions(self):
         agent = Orchestrator(None, Research(self.db, self.http), self.catalog,

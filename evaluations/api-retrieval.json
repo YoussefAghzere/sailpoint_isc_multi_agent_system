@@ -1,8 +1,26 @@
 [
-  {"prompt": "List configured sources", "expected_operation": "listSources"},
-  {"prompt": "Create source", "expected_operation": "createSource"},
-  {"prompt": "List schemas on source", "expected_operation": "getSourceSchemas"},
-  {"prompt": "Account aggregation", "expected_operation": "importAccounts"},
-  {"prompt": "Test source connection", "expected_operation": "testSourceConnection"},
-  {"prompt": "Get task status", "expected_operation": "getTaskStatus"}
+  {
+    "prompt": "List configured sources",
+    "expected_operation": "listSourcesV1"
+  },
+  {
+    "prompt": "Create source",
+    "expected_operation": "createSourceV1"
+  },
+  {
+    "prompt": "List schemas on source",
+    "expected_operation": "getSourceSchemasV1"
+  },
+  {
+    "prompt": "Account aggregation",
+    "expected_operation": "importAccountsV1"
+  },
+  {
+    "prompt": "Test source connection",
+    "expected_operation": "testSourceConnectionV1"
+  },
+  {
+    "prompt": "Get task status",
+    "expected_operation": "getTaskStatusV1"
+  }
 ]
