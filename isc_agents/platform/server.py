@@ -30,7 +30,8 @@ from .research import Research, OFFICIAL_HOSTS
 from .security import Vault, authenticate, authorize, password_hash, restricted_write, session, public_url
 from .specialists import ToolRegistry
 from .workflows import Workflows
-from .requests import Answers, route
+from .requests import Answers
+from .python_runtime import PythonSandbox
 
 
 @dataclass
@@ -197,7 +198,7 @@ def create_app(settings=None):
         return {"user": {"id": ctx.user["user_id"], "role": ctx.user["role"]}, "csrf": ctx.user["csrf"],
                 "model_configured": bool(selected_model), "selected_model": selected_model, "model_error": error,
                 "search_configured": bool(os.environ.get("BRAVE_SEARCH_API_KEY")),
-                "model": selected_model["model"] if selected_model else None}
+                "model": selected_model["model"] if selected_model else None, "python_runtime": PythonSandbox().capabilities()}
 
     @app.get("/api/model-profiles")
     def model_profiles(ctx=Depends(context)):
@@ -358,23 +359,16 @@ def create_app(settings=None):
             raise Rejected("Provide a bounded prompt and boolean research consent")
         if payload.get("model_profile_id") is not None and not isinstance(payload["model_profile_id"], str):
             raise Rejected("Choose a saved model profile")
-        task = payload.get("task", "auto")
-        if not isinstance(task, str) or not isinstance(payload.get("identity_query", ""), str):
-            raise Rejected("Provide a valid task and identity search value")
-        intent = route(prompt, task, payload.get("identity_query", ""))
-        if environment["backend"] == "isc" and not payload.get("proposal") and intent["task"] == "identity_lookup":
-            job_id = ctx.db.enqueue("identity_lookup", eid, {"query": intent["subject"], "actor": ctx.user["user_id"], "revision": environment["revision"]})
-            return {"job_id": job_id, "task": "identity_lookup"}
-        if environment["backend"] != "isc" and intent["task"] == "identity_lookup":
-            raise Rejected("Identity lookup requires a live ISC environment")
-        if environment["backend"] != "isc" or payload.get("proposal") or intent["task"] == "integration":
+        # All natural-language requests use the same agent loop. Examples are hints,
+        # never server-side recipes or identity-specific API dispatch.
+        if environment["backend"] != "isc" or payload.get("proposal"):
             env_access(ctx, eid, mutate=True)
         snapshot = None
         if environment["backend"] == "isc" and not payload.get("proposal"):
             snapshot = ctx.models.snapshot(ctx.user["user_id"], payload.get("model_profile_id"))
             if not snapshot:
                 raise Rejected("Choose a model in Models & appearance. Local Qwen or Llama through llama.cpp needs no OpenAI account")
-        kind = "explanation" if intent["task"] == "explanation" and environment["backend"] == "isc" and not payload.get("proposal") else "plan"
+        kind = "plan"
         job_id = ctx.db.enqueue(kind, eid, {"prompt": prompt, "revision": environment["revision"], "external": payload.get("external", False),
             "requirements": payload.get("requirements"), "proposal": payload.get("proposal"), "actor": ctx.user["user_id"], "model_profile": snapshot})
         return {"job_id": job_id, "task": kind}
@@ -388,17 +382,6 @@ def create_app(settings=None):
     def answer(eid: str, aid: str, ctx=Depends(context)):
         env_access(ctx, eid)
         return ctx.answers.get(eid, aid)
-
-    @app.post("/api/environments/{eid}/answers/{aid}/select")
-    def select_identity(eid: str, aid: str, payload: dict, ctx=Depends(context)):
-        environment = env_access(ctx, eid)
-        answer = ctx.answers.get(eid, aid)
-        identity_id = payload.get("identity_id")
-        if answer["revision"] != environment["revision"]:
-            raise Rejected("Environment changed; run a fresh identity lookup")
-        if answer["kind"] != "identity_lookup" or answer["status"] != "needs_selection" or not isinstance(identity_id, str) or identity_id not in {c["id"] for c in answer["candidates"]}:
-            raise Rejected("Choose an identity from this answer's candidates")
-        return {"job_id": ctx.db.enqueue("identity_lookup", eid, {"query": answer["query"], "selected_id": identity_id, "revision": environment["revision"], "actor": ctx.user["user_id"]}), "task": "identity_lookup"}
 
     @app.get("/api/environments/{eid}/runs")
     def runs(eid: str, ctx=Depends(context)):
@@ -491,6 +474,14 @@ def create_app(settings=None):
             ctx.db.execute("UPDATE tools SET status='inactive' WHERE id=?", (tid,))
             ctx.db.audit(ctx.user["user_id"], eid, "tool.deactivated", {"id": tid})
         return {"id": tid, "status": "inactive"}
+
+    @app.get("/api/environments/{eid}/code-runs/{execution_id}")
+    def code_run(eid: str, execution_id: str, ctx=Depends(context)):
+        env_access(ctx, eid)
+        row = ctx.db.one("SELECT content FROM code_runs WHERE id=? AND environment_id=?", (execution_id, eid))
+        if not row:
+            raise Rejected("Code execution not found in this environment")
+        return ctx.vault.decrypt(row["content"])
 
     @app.get("/api/environments/{eid}/drafts")
     def drafts(eid: str, ctx=Depends(context)):

@@ -12,11 +12,12 @@ import jsonschema
 from ..models import Rejected, canonical, digest
 from .catalog import Catalog
 from .security import reject_inline_secrets, redact
+from .python_runtime import PythonSandbox, BRIDGE_TOOLS
 
 
 ACTION_SCHEMA = {
     "type": "object", "additionalProperties": False,
-    "properties": {"action": {"type": "string", "enum": ["research", "catalog", "read_api", "validate_data", "invoke_tool", "delegate", "propose_tool", "draft_code", "finish", "ask"]},
+    "properties": {"action": {"type": "string", "enum": ["research", "catalog", "read_api", "validate_data", "invoke_tool", "delegate", "propose_tool", "create_tool", "draft_code", "run_python", "respond", "finish", "ask"]},
                    "summary": {"type": "string"}, "arguments": {"type": "string"}},
     "required": ["action", "summary", "arguments"],
 }
@@ -30,8 +31,11 @@ within them. Never invent endpoints or permissions, request secrets in chat, cla
 or treat a community workaround as authorization. The server performs all authorization.
 Use the selected environment's pinned OpenAPI catalog and current official evidence. External research
 is permitted only when enabled. Client decisions and connector prerequisites must be explicit.
-Stay within the user's requested task. Identity profile lookup is unrelated to role mining:
-never introduce role-mining sessions, potential roles, or export jobs unless requested.
+Choose the method yourself from the available capabilities. There are no fixed routes or
+preselected business APIs. First identify the requested outcome, then choose relevant tools.
+Use a short path for simple tasks and delegate only when useful. Search the API catalog using
+resource/action concepts, not a person's name or incidental wording. Stay within the request:
+do not introduce another product feature or workflow merely because a search returned it.
 Discover technical IDs through relevant read tools before asking users for them. Ask only
 for business decisions, ambiguous matches, or prerequisites that tools cannot establish.
 Available actions and argument forms:
@@ -42,7 +46,19 @@ invoke_tool: {tool_id:string,arguments:object}; active read-only API wrappers on
 validate_data: {attachment_id:string,account_id:string,required_attributes:[string]}; returns CSV quality checks without employee values.
 delegate: {template: researcher|connector_architect|validator, task: string}; bounded read-only specialist.
 propose_tool: {name: string,description: string,operation_id: string}; creates a pending API wrapper, not new permission.
-draft_code: {name: string,code: string}; creates an unexecuted Python draft for human review.
+create_tool: {name:string,description:string,operation_id:string}; create a reusable declarative API tool.
+GET wrappers are immediately usable; write wrappers stay pending review and never gain authority.
+draft_code: {name: string,code: string}; save Python without executing it.
+run_python: {name:string,code:string,inputs?:object}; save and execute Python in an isolated Docker runtime.
+Python has stdlib, an inputs object, and tools.call(name,arguments). The SDK returns
+{observation_id:string,result:any}. Allowed SDK calls: catalog, research, read_api, invoke_tool,
+validate_data. Example: records = tools.call("read_api", {"operation_id": "OP_FROM_CATALOG",
+"arguments": {"query": {"limit": 10}}})["result"]["data"]. Set result to a JSON-serializable
+value and/or print output. No host files, credentials, direct networking, package installation,
+or tenant mutations are available inside Python. Inspect errors and revise code when needed.
+respond: {answer:string,citations:[string]}; answer directly using observed results. Cite observation IDs
+from history or retrieved document IDs/URLs. Discover facts before making tenant-state claims.
+Use respond for information requests, analysis, explanations and computed results; no workflow is required.
 ask: {questions: [string]}; ask when business decisions/prerequisites are missing. Do not guess IDs.
 finish: for a specialist {answer: string,citations:[string]}; for the orchestrator a workflow:
 {title:string,questions:[],steps:[{id:string,operation_id:string,tool_id?:string,arguments:object,
@@ -56,7 +72,10 @@ Only registered, explicitly allowed mutations can execute after human approval. 
 Follow every mutation with a read or asynchronous job poll and meaningful expected-value checks. Aggregate
 success, correlation correctness, identity profiles, and provisioning are separate outcomes; never conflate them.
 For production, account for blast radius, partial failure, downstream effects, and manual recovery.
-Finish only if the entire requested scope has a verifiable plan. Otherwise ask focused questions.
+Return a workflow only for requested changes that need execution. For completed read/analysis tasks,
+respond with a useful answer and evidence. If matches are ambiguous, ask a focused question and list
+only the relevant choices observed from tools. Never ask the user to supply an ID that tools can discover.
+You may finish without tools for general advice but must distinguish it from verified tenant facts.
 """
 
 
@@ -80,7 +99,9 @@ class ToolRegistry:
             raise Rejected("Tools must be declarative single-operation API wrappers")
         if not all(isinstance(v, str) and 0 < len(v) <= 400 for v in manifest.values()):
             raise Rejected("Invalid tool metadata")
-        Catalog(self.db).operation(self.env["spec_id"], manifest["operation_id"])
+        operation = Catalog(self.db).operation(self.env["spec_id"], manifest["operation_id"])
+        if operation["contract"].get("deprecated"):
+            raise Rejected("Cannot create tools for deprecated API operations")
         manifest = {**manifest, "spec_id": self.env["spec_id"]}
         tool_id = uuid.uuid4().hex
         with self.db.tx():
@@ -141,19 +162,22 @@ class Orchestrator:
         self.max_turns = getattr(model, "config", {}).get("max_planning_turns", 16)
         self.max_calls = self.max_turns + 12  # shared allowance for bounded specialists
         self.evidence = []
+        self.observations = []
         self.heartbeat = heartbeat or (lambda event: None)
 
     def run(self, prompt, attachments=()):
         if not 1 <= len(prompt) <= 12000:
             raise Rejected("Prompt must contain 1–12000 characters")
-        self.evidence = self.research.search(prompt, self.env["id"])
+        started = time.monotonic()
+        self.evidence = []
         context = {"prompt": prompt, "environment": self.env, "attachments": attachments,
                    "external_research_enabled": self.external,
                    "evidence": self.evidence,
-                   "operations": self.catalog.operations(self.env["spec_id"], prompt, limit=20),
+                   "capabilities": {"actions": ACTION_SCHEMA["properties"]["action"]["enum"], "python": PythonSandbox().capabilities(),
+                                    "instruction": "Choose your own tools and outcome; discover relevant API operations through catalog"},
                    "active_tools": self.registry.db.all("SELECT id,manifest FROM tools WHERE environment_id=? AND status='active'", (self.env["id"],))}
         result = self._agent("orchestrator", context, depth=0)
-        return {"result": result, "trace": self.trace, "budget": self.budget.__dict__, "evidence": self.evidence[:20]}
+        return {"result": result, "trace": self.trace, "budget": self.budget.__dict__, "evidence": self.evidence[:20] + self.observations, "duration_seconds": round(time.monotonic() - started, 3)}
 
     def _agent(self, role, context, depth):
         history = []
@@ -186,8 +210,15 @@ class Orchestrator:
                      "model_seconds": round(time.monotonic() - started, 3), "model_calls": self.budget.calls}
             self.trace.append(event)
             self.heartbeat(event)
+            if action["action"] == "respond" or (action["action"] == "finish" and not depth and "answer" in args):
+                return self._answer(args)
             if action["action"] in {"finish", "ask"}:
-                return args if action["action"] == "finish" else {"questions": args.get("questions", [])}
+                if action["action"] == "ask":
+                    questions = args.get("questions")
+                    if not isinstance(questions, list) or not 1 <= len(questions) <= 10 or not all(isinstance(q, str) and 1 <= len(q) <= 1000 for q in questions):
+                        raise Rejected("Agent must ask 1–10 bounded clarification questions")
+                    return {"questions": questions}
+                return args
             if turn == max_local_calls - 1:
                 if depth:
                     return {"answer": "Specialist turn limit reached; use findings or ask the owner", "findings": history}
@@ -210,15 +241,59 @@ class Orchestrator:
                 event["status"] = "tool_rejected"
             else:
                 event["status"] = "tool_completed"
+            observation = self._observe(action["action"], args, event["status"], output)
+            event["observation_id"] = observation["id"]
             # Persist status only: tool arguments/results may contain tenant data.
             self.heartbeat(event)
             # Bound result size. The agent can fetch narrower operations/pages if needed.
-            history.append({"action": event, "result": canonical(output)[:16000]})
+            history.append({"action": event, "observation_id": observation["id"], "result": canonical(output)[:16000]})
         if depth:
             return {"answer": "Specialist budget exhausted", "findings": history}
         raise Rejected("Orchestrator budget exhausted before a complete plan")
 
+    def _answer(self, args):
+        schema = {"type": "object", "additionalProperties": False,
+            "required": ["answer", "citations"], "properties": {"answer": {"type": "string", "minLength": 1, "maxLength": 12000},
+            "citations": {"type": "array", "maxItems": 30, "items": {"type": "string"}}}}
+        try:
+            jsonschema.validate(args, schema)
+        except jsonschema.ValidationError:
+            raise Rejected("Agent answer must contain bounded answer text and a citations array") from None
+        known = {o["id"] for o in self.observations}
+        known.update(e.get("id") for e in self.evidence if isinstance(e, dict))
+        known.update(e.get("url") for e in self.evidence if isinstance(e, dict))
+        if any(c not in known for c in args["citations"]):
+            raise Rejected("Agent answer cites evidence that was not observed")
+        if self.observations and not args["citations"]:
+            raise Rejected("Agent answer must cite its tool observations")
+        return args
+
+    def _observe(self, action, args, status, output=None):
+        observation = {"id": "obs_" + str(len(self.observations) + 1), "action": action,
+                       "status": status, "observed_at": time.time()}
+        if action == "read_api":
+            observation.update(operation_id=args.get("operation_id"), spec_id=self.env["spec_id"])
+        if isinstance(output, dict):
+            observation.update({k: output[k] for k in ("status_code", "request_id", "state_hash", "execution_id", "code_hash", "image") if k in output})
+        self.observations.append(observation)
+        return observation
+
+    def _python_bridge(self, action, args, role, depth):
+        if action not in BRIDGE_TOOLS:
+            raise Rejected("Python capability is not allowed")
+        if self.budget.tools >= self.max_calls:
+            raise Rejected("Shared tool budget exhausted")
+        self.budget.tools += 1
+        output = self._tool(action, args, role, depth)
+        observation = self._observe(action, args, "tool_completed", output)
+        event = {"role": role, "action": "python." + action, "summary": "Python requested a controlled read capability", "status": "tool_completed", "observation_id": observation["id"]}
+        self.trace.append(event)
+        self.heartbeat(event)
+        return {"observation_id": observation["id"], "result": output}
+
     def _tool(self, action, args, role, depth):
+        if self.isc.environments.get(self.env["id"])["revision"] != self.env["revision"]:
+            raise Rejected("Environment changed; submit a fresh request")
         if action == "research":
             kind = args.get("kind", "local")
             if kind == "local":
@@ -253,10 +328,32 @@ class Orchestrator:
                 raise Rejected("Specialist template, depth, or agent-count limit exceeded")
             self.budget.agents += 1
             return self._agent(args["template"], {"task": args["task"], "environment": self.env}, depth + 1)
-        if action in {"propose_tool", "draft_code"} and depth:
+        if action in {"propose_tool", "create_tool", "draft_code", "run_python"} and depth:
             raise Rejected("Specialists are read-only and cannot register artifacts")
-        if action == "propose_tool":
-            return self.registry.propose(args, "agent")
+        if action in {"propose_tool", "create_tool"}:
+            tool = self.registry.propose(args, "agent")
+            if action == "create_tool" and self.catalog.operation(self.env["spec_id"], args["operation_id"])["method"] == "GET":
+                self.registry.activate(tool["id"], tool["hash"], "agent")
+                tool["status"] = "active"
+            return tool
+        if action == "run_python":
+            draft = self.registry.draft(args["name"], args["code"], "agent")
+            execution_id = uuid.uuid4().hex
+            try:
+                runtime = PythonSandbox()
+                result = runtime.run(args["code"], args.get("inputs", {}), lambda name, arguments: self._python_bridge(name, arguments, role, depth))
+                executed = True
+            except Rejected as exc:
+                result, executed = {"status": "rejected", "error": str(exc)}, False
+            result.update(execution_id=execution_id, draft_id=draft["id"], code_hash=digest(args["code"]), image=runtime.image)
+            if self.isc.environments.get(self.env["id"])["revision"] != self.env["revision"]:
+                raise Rejected("Environment changed during Python execution; result discarded")
+            with self.registry.db.tx():
+                self.registry.db.execute("INSERT INTO code_runs VALUES(?,?,?,?,?,?)", (execution_id, self.env["id"], draft["id"], self.env["revision"], self.isc.environments.vault.encrypt(result), time.time()))
+                review = {**draft["review"], "executed": executed, "status": result["status"], "runtime": "docker", "execution_id": execution_id}
+                self.registry.db.execute("UPDATE drafts SET review=? WHERE id=? AND environment_id=?", (canonical(review), draft["id"], self.env["id"]))
+                self.registry.db.audit("agent", self.env["id"], "python.executed" if executed else "python.rejected", {"execution_id": execution_id, "draft_id": draft["id"], "code_hash": result["code_hash"], "status": result["status"]})
+            return result
         if action == "draft_code":
             return self.registry.draft(args["name"], args["code"], "agent")
         raise Rejected("Unregistered agent tool")

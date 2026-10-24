@@ -1,84 +1,39 @@
-# Requests, answers, and integration plans
+# Agent requests and outcomes
 
-Workspace offers **Automatic**, **Find an identity**, **Ask about documentation**,
-and **Plan an integration or change**. Editable examples populate the task and inputs.
+All live natural-language requests go to the selected model's agent loop. There are
+no identity-specific routes, keyword-selected API calls, or separate documentation
+answer pipelines. Workspace examples only fill in editable prompt text.
 
-Automatic routing is deliberately conservative and uses patterns, not an extra LLM
-call. For example, `Retrieve information about Youssef Aghzere`, `Who is Jane Doe?`,
-and `Find identity Jane Doe` enter identity lookup. `Explain account correlation`
-enters documentation answering. Other requests retain integration planning. Explicit
-selection overrides automatic routing. Complex requests, access investigations, and
-languages outside the supported English patterns should use the task selector.
+The model sees the user's goal, public environment configuration, attachment metadata,
+active tool manifests, and available capabilities. It chooses which tools to call;
+server code validates arguments, permissions and budgets. It may:
 
-## Identity lookup
+- Search indexed documentation or perform opted-in web research.
+- Discover API operations and inspect their pinned OpenAPI schemas.
+- Call controlled GET APIs or existing active tools.
+- Create a reusable API wrapper. GET wrappers can be used immediately; write wrappers
+  remain pending review and cannot execute during reasoning.
+- Generate Python, save it as a draft, or execute it in the isolated Docker runtime.
+- Delegate bounded, read-only specialist work.
+- Return an answer, ask clarification, or propose an executable workflow.
 
-Select a live ISC environment, choose **Find an identity**, and supply a full name,
-email, or identity ID. A model profile and running llama.cpp server are not required.
-The prompt's name can be extracted automatically; the dedicated search field takes
-precedence when supplied.
+Answers cite observed tool IDs or retrieved sources. Citation checks establish source
+membership, not semantic correctness of every generated claim. Uncited model guidance
+is labelled unverified. Clarification questions support a follow-up reply in the UI;
+the original request and reply go back through the same agent loop. No hidden lookup
+recipe is introduced when the user chooses a person or provides an ID.
 
-The backend checks the selected environment's pinned contracts and performs:
+Proposed changes still require the workflow's validation and approval. Approved
+execution uses the reviewed API change set. Python cannot bypass this gateway.
 
-1. `listIdentities`: exact name/alias, email, or first/last-name filters, with a bounded
-   21-result page and `defaultFilter=NONE` when supported by the contract.
-2. No results: report the lack of an exact match and suggest an email or identity ID.
-   This does not prove absence from the tenant.
-3. One result: retrieve `getIdentity` and verify the returned identity ID.
-4. Multiple results: display at most 20 candidates and require selection. Selection is
-   checked against the original answer and environment revision. It never chooses a
-   person by guesswork. An identity ID query goes directly to `getIdentity`.
+The model's size, quality, context capacity and inference speed affect correctness and
+latency. Parsed API contracts remain cached. The model is instructed to choose short
+paths for simple tasks and delegate only when useful. Timings, actions and tool
+observations are visible; there is no zero-model-call shortcut for special requests.
+The worker remains single-threaded, so queueing behind another task can add latency.
 
-The **Answers & identity lookups** view shows common profile fields, including status
-and manager when returned, API evidence, observation time, model-call count and elapsed
-worker time. This is a profile lookup: it does not query accounts, entitlements, role
-mining, or provisioning. Only allowlisted profile fields are shown. For v2026, first/last names are read from
-`attributes`, email from `emailAddress`, and manager from `managerRef`; other custom
-attributes are excluded from the summary. Search is
-exact and bounded; spelling variants and complex names may require email/ID refinement.
-No POST search exception or mutation authorization is added to the API gateway. OAuth
-still obtains a token through its normal endpoint; the tenant operations are GETs.
+Old queued jobs from the retired fixed identity/documentation paths fail with a
+resubmit message; they cannot make automatic API calls. Stored prior answers remain
+available. Resubmit a prompt to use the new agent loop.
 
-Answer bodies and candidate lists use the vault's encryption at rest. List endpoints
-and job results expose metadata and an answer ID, not employee details. The answer API
-requires access to the selected environment. Queued reads reject environment revisions
-changed since submission. A fresh lookup is required to refresh old answer data.
-
-## Documentation questions
-
-A saved model is required. The worker retrieves up to four scoped indexed documentation
-chunks and generates one answer with citations. It drops lower-ranked chunks to fit the
-profile's input-character limit. Citation IDs must refer to supplied evidence; this
-check establishes source membership, not semantic correctness of every generated claim.
-No relevant evidence produces guidance to ingest documentation, without a model call.
-This mode does not query the tenant, execute integration actions, delegate agents, or
-perform live web research. The external research option applies to integration planning.
-
-## Integration planning
-
-Integration requests continue through the bounded orchestrator, optional read-only
-specialists, contract validation and independent model review. Approved execution stays
-a separate action. A prompt instruction explicitly distinguishes identity profiles from
-role mining and tells agents to discover technical IDs before asking users for them.
-This improves guidance but does not guarantee correct reasoning from a small model.
-
-## Performance and verification
-
-Identity profiles use zero inference calls and normally one list plus one detail call,
-while documentation answers use one inference call. Neither incurs the integration
-planner's multi-turn orchestration or independent review. OAuth, network latency, rate
-limits, and time waiting behind a running job still affect completion time; the worker
-remains single-threaded. The UI polls once per second while a request is pending and every six seconds
-otherwise; it prevents overlapping refreshes.
-
-Parsed pinned OpenAPI documents and operation indexes are cached per Catalog instance,
-bounded to three documents. Metadata such as freshness is still read from the database.
-Tenant identity responses are not cached as fresh reads. Answers record elapsed worker
-time; integration action events also record individual model-call time. These timings
-exclude queue wait and should not be interpreted as a guaranteed speedup on a client's
-hardware.
-
-`python -m unittest discover -s tests -p test_requests.py` exercises routing, unique and
-ambiguous identity outcomes, no matches, result bounds, encrypted storage, environment
-scoping, changed environments, mismatched IDs, citations and parse-cache behavior using
-synthetic API responses. These are outcome tests, not a measured evaluation of a real
-Qwen model or a live tenant. UI interactions are covered in `tests/models-ui.test.cjs`.
+See [agent runtime](agent-runtime.md) for Python setup, boundaries and verification.

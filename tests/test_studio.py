@@ -508,6 +508,8 @@ class StudioTests(unittest.TestCase):
                 requests.append((role, context))
                 if role.startswith("Independent"):
                     return {"approved": True, "findings": ["Synthetic review"]}
+                if len(requests) == 1:
+                    return {"action": "research", "summary": "Find official evidence", "arguments": json.dumps({"kind": "local", "query": "Create source HR prerequisites"})}
                 return {"action": "finish", "summary": "Compile validated steps", "arguments": json.dumps(proposal())}
         job = self.db.enqueue("plan", self.env["id"], {"prompt": "Create HR source", "actor": "operator"})
         worker = Worker(self.db, self.envs, self.http, model=Model())

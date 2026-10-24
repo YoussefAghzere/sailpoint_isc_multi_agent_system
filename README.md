@@ -29,18 +29,25 @@ official v2026 API contract. A fresh checkout starts without environments. For a
 offline demonstration, create a Simulator environment, submit the sample requirements,
 inspect the plan, approve it, then execute it. Simulated changes never reach ISC.
 
-## Choose the right task
+## Agent-driven requests
 
-In Workspace, choose **Find an identity** for a profile lookup, **Ask about documentation**
-for a cited answer, or **Plan an integration or change** for engineering workflows.
-Automatic mode recognizes common lookup and explanation prompts. Editable examples
-help you start with suitable inputs.
+Every natural-language request enters the same model-driven loop. The agent chooses
+whether to research documentation, discover an API, use an existing tool, create a
+read tool, execute Python, ask a question, return an answer, or propose a workflow.
+Examples only populate editable prompts; they do not select fixed business recipes.
+A model profile is required for live agent requests, including simple lookups.
 
-`Retrieve information about Youssef Aghzere` now searches identities in the selected
-live tenant and returns a profile or matching candidates. It uses **zero LLM calls**;
-Qwen does not need to be running for this lookup. Documentation questions use one
-model call against indexed evidence. Integration work retains reviewed planning and
-approval. See [request modes and limits](docs/request-modes.md).
+Agent answers and clarification questions appear under **Agent answers**. Changes
+continue through reviewed integration plans and approval. To enable isolated Python,
+start Docker Desktop/Engine and build the runtime once:
+
+```bash
+docker build -t isc-agent-python:local -f sandbox/Dockerfile .
+```
+
+Generated Python runs in a disposable, unprivileged container with no host mounts or
+network. Its tool SDK uses the same controlled read gateway as the agent; credentials
+stay on the backend. See [agent runtime setup and SDK](docs/agent-runtime.md).
 
 ## Configure real agents and environments
 
@@ -92,7 +99,7 @@ Optional server-level defaults and research settings:
 
 Restart only after changing server environment variables. Saved UI profiles take
 precedence over server defaults. Without a model, simulation and manually authored
-live workflows and identity profile lookups remain available. There is no automatic paid-provider fallback.
+live workflows remain available. There is no automatic paid-provider fallback.
 
 **Appearance:** choose Light, Dark or System in the header or Models & appearance.
 The blue/navy palette is inspired by Magellan Group. The choice persists in this

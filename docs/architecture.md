@@ -90,16 +90,37 @@ provisioning. The quality of expected-value assertions remains an engineering co
 4. Add independent immutable audit, encrypted backups, restore drills, monitoring,
    provider spend limits and distributed coordination where required.
 5. Add proven connector recipes, additional content types, semantic retrieval and
-   isolated generated-code testing/deployment for concrete use cases.
+   generated-code dependency profiles, stronger multi-tenant isolation, and connector deployment validation for concrete use cases.
 
 These operational and business validations cannot be inferred from local contract tests.
 
-## Request routing and answer paths
+## Unified agent loop and Python runtime
 
-`platform/requests.py` separates bounded identity profile reads from integration plans.
-Conservative routing or the explicit UI task chooses identity lookup, documentation
-answer, or integration. Identity lookups use no model and only pinned GET contracts;
-ambiguous matches require candidate selection. Documentation answers use indexed,
-scoped evidence and one validated model response. Answers use a separate encrypted,
-environment-scoped table and API; they do not become approvable workflow plans.
-See [request modes](request-modes.md) for scope, performance, and limitations.
+Natural-language requests always reach `Orchestrator`; no keyword router selects a
+business API or fixed procedure. The model chooses capabilities and returns an answer,
+a clarification, or a workflow. API discovery happens when the agent calls `catalog`.
+Read API wrappers created with `create_tool` can be used immediately; write wrappers
+stay pending review. Agents can execute Python through `run_python`.
+
+```mermaid
+flowchart LR
+    P[Prompt + environment] --> A[Agent chooses next action]
+    A --> T[Research / API catalog / controlled read tools]
+    A --> G[Create a tool]
+    A --> C[Generate Python]
+    C --> D[Disposable Docker runtime]
+    D --> SDK[Read-only SDK bridge]
+    SDK --> T
+    T --> A
+    G --> A
+    D --> A
+    A --> R[Answer / question]
+    A --> W[Validated workflow → approval → execution]
+```
+
+Python receives source and JSON inputs through stdin, not host mounts. Docker has a
+read-only root, non-root UID, no network, no added capabilities, memory/CPU/PID limits,
+and bounded time/output/tool calls. The SDK cannot execute write operations, approve
+plans, spawn recursive code runners, or obtain credentials. Execution results and
+answers are encrypted and environment-scoped. The runtime never executes generated
+code inside the server process. See [runtime setup](agent-runtime.md).

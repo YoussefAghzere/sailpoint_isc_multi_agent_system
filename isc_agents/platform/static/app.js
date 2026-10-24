@@ -35,7 +35,6 @@ function renderEnvironments(){
   $('plan-button').disabled=!current;$('discover').disabled=current?.backend!=='isc';
   $('environment-cards').innerHTML=state.envs.length?state.envs.map(e=>`<article class="environment-card ${e.id===state.eid?'active':''}"><strong>${esc(e.name)}</strong> ${badge(e.stage)}<p>${esc(e.client)} · ${esc(e.backend)}<br>${esc(e.base_url||'Local simulator')}</p><p>${e.has_credentials?'Encrypted credentials configured':'No live credentials'} · ${e.write_enabled?'Approved writes enabled':'Read-only policy'}</p><button class="text-button" data-env-edit="${esc(e.id)}">Edit environment →</button></article>`).join(''):'<p class="empty">Create your first environment.</p>';
   document.querySelectorAll('[data-env-edit]').forEach(b=>b.addEventListener('click',()=>editEnvironment(b.dataset.envEdit)));
-  requestHelp();
   const currentSpec=$('env-spec').value;
   $('env-spec').innerHTML='<option value="">Select imported specification</option>'+state.specs.map(s=>`<option value="${esc(s.id)}">${esc(s.version)} · ${esc(s.hash.slice(0,10))} · ${esc(stamp(s.fetched))}</option>`).join('');
   if(state.specs.some(s=>s.id===currentSpec))$('env-spec').value=currentSpec;
@@ -53,32 +52,19 @@ on('environment-form','submit',async()=>{
   const saved=await api('/environments'+(state.editing?'/'+state.editing:''),state.editing?'PUT':'POST',payload);state.eid=saved.id;sessionStorage.setItem('isc-environment',state.eid);await refresh();editEnvironment(saved.id);setStructuredDefault();environmentStatus('Environment saved successfully.');toast('Environment saved. Earlier plans retain their old revision.');
 });
 on('user-form','submit',async()=>{const e=requireEnv();await api('/users','POST',{username:$('new-user-name').value,password:$('new-user-password').value,role:$('new-user-role').value,environments:[e.id]});$('new-user-password').value='';$('user-form').reset();toast('User created for '+e.name);});
-function requestMode(){return $('request-task').value||'auto';}
-function likelyLookup(prompt){return /^(?:(?:retrieve|get|show|find|look up|lookup)\s+(?:information|info|details|a summary)\s+(?:about|for|on)\s+|(?:find|show|lookup|look up|get)\s+(?:the\s+)?(?:identity|person|user)\s+|who is\s+)/i.test(prompt.trim().replace(/^please\s+/i,''));}
-function requestHelp(){
-  const task=requestMode();$('identity-query-field').hidden=task!=='identity_lookup';
-  $('plan-hint').textContent=!env()?'Choose an environment to begin.':env().backend==='simulator'?'Offline simulation · explicit source requirements':state.me?.model_configured?'Agent planning · no writes before approval':'Choose a local or cloud model in Models & appearance';
-  if(env()?.backend==='isc'&&(task==='identity_lookup'||(task==='auto'&&likelyLookup($('prompt').value))))$('plan-hint').textContent='Read-only identity profile · no model needed';
-  else if(task==='explanation')$('plan-hint').textContent='Indexed documentation · one model call';
-  $('request-help').textContent=task==='identity_lookup'?'Search exact names, aliases, emails, or identity IDs. Multiple matches require your selection. No LLM, account, entitlement, or role-mining requests.':task==='explanation'?'Answer from indexed documentation in one model call. Ingest relevant pages under Knowledge & research first; this mode does not browse the web.':task==='integration'?'Describe the connector, ownership, business rules, and expected outcome. Agents research and propose a plan for review.':'Automatic routing recognizes simple identity lookups and documentation questions. Choose a task explicitly for ambiguous requests.';
-}
-on('request-task','change',requestHelp);
-on('prompt','input',requestHelp);
 on('task-example','change',()=>{
-  const examples={identity:{task:'identity_lookup',prompt:'Retrieve information about Jane Doe',query:'Jane Doe'},documentation:{task:'explanation',prompt:'Explain how account correlation works in SailPoint ISC.'},connector:{task:'integration',prompt:'Plan a delimited-file HR source integration. Employee ID is the account identifier and correlation key. Include schema, ownership, prerequisites, and verification; ask for missing business decisions.'}};
-  const example=examples[$('task-example').value];if(!example)return;
-  $('request-task').value=example.task;$('prompt').value=example.prompt;$('identity-query').value=example.query||'';requestHelp();
+  const examples={identity:'Retrieve information about Jane Doe. Discover the relevant APIs and ask me to distinguish matching people if needed.',documentation:'Explain how account correlation works in SailPoint ISC. Use relevant documentation and cite the evidence.',analysis:'Write and run Python to summarize this sample by department: [{"department":"IT","count":4},{"department":"HR","count":2},{"department":"IT","count":3}]. Show the result and evidence of execution.',connector:'Plan a delimited-file HR source integration. Employee ID is the account identifier and correlation key. Include schema, ownership, prerequisites, and verification; ask for missing business decisions.'};
+  const example=examples[$('task-example').value];if(example)$('prompt').value=example;
 });
 on('plan-form','submit',async()=>{
   const e=requireEnv(),structured=$('structured').value.trim()?JSON.parse($('structured').value):null;
-  const task=requestMode(),lookup=task==='identity_lookup'||(task==='auto'&&likelyLookup($('prompt').value));
-  if(e.backend==='isc'&&!structured&&!lookup&&!state.me.model_configured){switchTab('models');toast('Add a local llama.cpp profile or choose a cloud model to enable agent planning.');return;}
-  const payload={prompt:$('prompt').value,external:$('external').checked,model_profile_id:state.modelData.selected_id||'',task,identity_query:task==='identity_lookup'?$('identity-query').value:''};
+  if(e.backend==='isc'&&!structured&&!state.me.model_configured){switchTab('models');toast('Choose a local or cloud model so the agent can reason and select its tools.');return;}
+  const payload={prompt:$('prompt').value,external:$('external').checked,model_profile_id:state.modelData.selected_id||''};
   if(e.backend==='simulator')payload.requirements=structured||sample;else if(structured)payload.proposal=structured;
   const result=await api(`/environments/${e.id}/plan`,'POST',payload);state.pendingPlan=result.job_id;
-  toast(result.task==='identity_lookup'?'Identity lookup queued · no model calls.':result.task==='explanation'?'Documentation answer queued.':'Planning job queued. Follow its progress in Background activity.');await refresh();
+  toast('Agent request queued. Follow its actions in Background activity.');await refresh();
 });
-on('discover','click',async()=>{const e=requireEnv();await api(`/environments/${e.id}/discover`,'POST',{});toast('Read-only discovery queued.');await refresh();});
+on('discover','click',()=>{requireEnv();$('structured').value='';$('prompt').value='Inspect this tenant using relevant read-only tools. Choose what to discover and summarize the evidence.';$('plan-form').requestSubmit();});
 on('csv-upload','change',async()=>{const e=requireEnv(),file=$('csv-upload').files[0];if(!file)return;if(file.size>5000000)throw new Error('CSV exceeds the 5 MB limit');const bytes=new Uint8Array(await file.arrayBuffer());let text='';for(let i=0;i<bytes.length;i+=16384)text+=String.fromCharCode(...bytes.subarray(i,i+16384));await api(`/environments/${e.id}/attachments`,'POST',{name:file.name,base64:btoa(text)});$('csv-upload').value='';toast('CSV encrypted and attached to '+e.name);await refresh();});
 on('refresh','click',refresh);
 function renderEmptyRun(){$('run-detail').innerHTML='<div class="empty large">◈<h3>A clear record of every change</h3><p>Select a run to inspect its plan, evidence, and execution results.</p></div>';}
@@ -122,21 +108,25 @@ async function refresh(){
     const [tools,drafts]=await Promise.all([api(`/environments/${eid}/tools`),api(`/environments/${eid}/drafts`)]);if(eid!==state.eid)return;
     $('tools').innerHTML=tools.length?tools.map(t=>`<article class="artifact"><h3>${esc(t.manifest.name)} ${badge(t.status)}</h3><p class="fine">${esc(t.manifest.description)}</p><pre>${esc(pretty(t.manifest))}</pre><p class="digest">${esc(t.hash)}</p>${t.status==='proposed'?`<button class="secondary" data-activate="${esc(t.id)}">Activate reviewed tool</button>`:''}</article>`).join(''):'<p class="empty">Agent-proposed API wrappers will appear here for review.</p>';
     document.querySelectorAll('[data-activate]').forEach(b=>b.addEventListener('click',async()=>{try{const t=tools.find(x=>x.id===b.dataset.activate);await api(`/environments/${eid}/tools/${t.id}/activate`,'POST',{hash:t.hash});toast('Reviewed tool activated within environment permissions.');await refresh();}catch(e){toast(e.message,true);}}));
-    $('drafts').innerHTML=drafts.length?drafts.map(d=>`<article class="artifact"><h3>${esc(d.name)}</h3><p class="fine">Human review required · not executed</p><details><summary>Inspect code and static checks</summary><pre>${esc(d.content)}</pre><pre>${esc(pretty(d.review))}</pre></details><button class="secondary" data-download-draft="${esc(d.id)}">Download draft ↓</button></article>`).join(''):'<p class="empty">No generated code drafts.</p>';
+    $('drafts').innerHTML=drafts.length?drafts.map(d=>`<article class="artifact"><h3>${esc(d.name)}</h3><p class="fine">${esc(d.review.status)} · ${d.review.executed?'Executed in Docker':'Not executed'}</p>${d.review.execution_id?`<button class="secondary" data-code-result="${esc(d.review.execution_id)}">View execution result</button><pre id="code-result-${esc(d.review.execution_id)}"></pre>`:''}<details><summary>Inspect code and static checks</summary><pre>${esc(d.content)}</pre><pre>${esc(pretty(d.review))}</pre></details><button class="secondary" data-download-draft="${esc(d.id)}">Download draft ↓</button></article>`).join(''):'<p class="empty">No generated code drafts.</p>';
+    document.querySelectorAll('[data-code-result]').forEach(b=>b.addEventListener('click',async()=>{try{const id=b.dataset.codeResult,result=await api(`/environments/${eid}/code-runs/${id}`);if(eid===state.eid)$('code-result-'+id).textContent=pretty(result);}catch(e){toast(e.message,true);}}));
     document.querySelectorAll('[data-download-draft]').forEach(b=>b.addEventListener('click',()=>{const d=drafts.find(x=>x.id===b.dataset.downloadDraft);download(d.name,d.content,'text/plain');}));
   }
   if(state.tab==='audit'){state.audit=await api(`/environments/${eid}/audit`);$('audit').innerHTML=table(['TIME','ACTOR','EVENT','DETAILS'],state.audit.map(e=>[esc(stamp(e.at)),esc(e.actor),esc(e.kind),esc(pretty(e.details))]));}
   } finally {refreshing=false;}
 }
 function renderAnswers(answers,eid){
-  $('answers').innerHTML=answers.map(a=>`<button class="secondary" data-answer="${esc(a.id)}">${esc(a.kind==='identity_lookup'?'Identity lookup':'Documentation')} · ${esc(stamp(a.created))}</button>`).join('');
+  $('answers').innerHTML=answers.map(a=>`<button class="secondary" data-answer="${esc(a.id)}">Agent result · ${esc(stamp(a.created))}</button>`).join('');
   document.querySelectorAll('[data-answer]').forEach(b=>b.addEventListener('click',()=>{state.selectedAnswer=b.dataset.answer;loadAnswer(state.selectedAnswer,eid).catch(e=>toast(e.message,true));}));
 }
 async function loadAnswer(aid,eid){
   const answer=await api(`/environments/${eid}/answers/${aid}`);if(eid!==state.eid||aid!==state.selectedAnswer)return;
-  const fields=answer.identity||{};
-  $('answer-detail').innerHTML=`<div class="card-heading"><h3>${esc(answer.kind==='identity_lookup'?'Identity profile':'Documentation answer')}</h3>${badge(answer.status)}</div><p>${esc(answer.message||'')}</p>${answer.answer?`<p class="answer-text">${esc(answer.answer)}</p>`:''}${Object.keys(fields).length?table(['FIELD','VALUE'],Object.entries(fields).map(([k,v])=>[esc(k),esc(typeof v==='object'?pretty(v):v)])):''}${answer.candidates?.length?table(['NAME','EMAIL','IDENTITY ID','SELECT'],answer.candidates.map(c=>[esc([c.firstname,c.lastname].filter(Boolean).join(' ')||c.name),esc(c.email),esc(c.id),`<button class="secondary" data-identity-choice="${esc(c.id)}">Use this identity</button>`])):''}${answer.truncated?'<p class="notice">Only the first 20 candidates are shown. Refine with an email or identity ID.</p>':''}<p class="fine">${esc(answer.scope||answer.note||'')} · ${esc(answer.model_calls)} model calls · ${esc(answer.duration_seconds)} seconds</p><details><summary>API / documentation evidence</summary><pre>${esc(pretty(answer.evidence||[]))}</pre></details>`;
-  document.querySelectorAll('[data-identity-choice]').forEach(b=>b.addEventListener('click',async()=>{try{const result=await api(`/environments/${eid}/answers/${aid}/select`,'POST',{identity_id:b.dataset.identityChoice});state.pendingPlan=result.job_id;toast('Reading the selected identity.');await refresh();}catch(e){toast(e.message,true);}}));
+  $('answer-detail').innerHTML=`<div class="card-heading"><h3>Agent result</h3>${badge(answer.status)}</div><p class="answer-text">${esc(answer.answer||answer.message||'')}</p>${answer.questions?.length?`<div class="notice"><strong>Clarification needed</strong><ul>${answer.questions.map(q=>`<li>${esc(q)}</li>`).join('')}</ul></div>`:''}<p class="fine">${esc(answer.note||'')} · ${esc(answer.model_calls)} model calls · ${esc(answer.duration_seconds)} seconds</p><details><summary>Evidence and citations</summary><pre>${esc(pretty({citations:answer.citations||[],evidence:answer.evidence||[]}))}</pre></details><details><summary>Agent actions</summary><pre>${esc(pretty(answer.trace||[]))}</pre></details>${answer.questions?.length?'<form id="answer-followup"><label>Your reply<textarea id="answer-reply" rows="3" maxlength="4000" required></textarea></label><button class="primary">Continue with agent</button></form>':''}`;
+  if(answer.questions?.length)on('answer-followup','submit',async()=>{
+    const prompt=`Original request: ${answer.prompt||''}\nQuestions: ${answer.questions.join(' ')}\nUser clarification: ${$('answer-reply').value}`;
+    if(prompt.length>12000)throw new Error('Follow-up is too long. Submit a shorter combined request.');
+    const result=await api(`/environments/${eid}/plan`,'POST',{prompt,external:$('external').checked,model_profile_id:state.modelData.selected_id||''});state.pendingPlan=result.job_id;toast('Agent follow-up queued.');await refresh();
+  });
 }
 const providerNames={local:'Local · llama.cpp',openai:'OpenAI',anthropic:'Claude',gemini:'Gemini'};
 function modelStatus(message,error=false){$('model-status').textContent=message;$('model-status').hidden=!message;$('model-status').classList.toggle('error',error);}
